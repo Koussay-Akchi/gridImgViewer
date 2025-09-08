@@ -11,11 +11,11 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from send2trash import send2trash
 
 
-CONFIG_START_DIR = ""  # e.g. r"C:\\path\\to\\images" or leave empty to use env/home
+CONFIG_START_DIR = ""
 DEFAULT_START_DIR = str(Path.home())
 THUMBNAIL_SIZE = QtCore.QSize(256, 256)
-GRID_ROWS = 4
-GRID_COLS = 4
+GRID_ROWS = 2
+GRID_COLS = 2
 MAX_WORKERS = max(4, (os.cpu_count() or 4))
 
 
