@@ -5,6 +5,7 @@ import threading
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Optional, List, Tuple, Dict
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from send2trash import send2trash
@@ -39,14 +40,14 @@ class ImageSlot(QtWidgets.QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.label)
 
-    def set_path(self, path: str | None):
+    def set_path(self, path: Optional[str]):
         self._path = path
         self._seen = self._seen or (path is not None)
 
     def path(self):
         return self._path
 
-    def set_pixmap(self, pix: QtGui.QPixmap | None):
+    def set_pixmap(self, pix: Optional[QtGui.QPixmap]):
         if pix is None:
             self.label.setText(":-)")
             self.label.setStyleSheet("color: #7a7a7a; font-size: 24px;")
@@ -104,7 +105,7 @@ class ThumbnailCache(QtCore.QObject):
         super().__init__(parent)
         self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
         self._lock = threading.Lock()
-        self._cache: dict[str, QtGui.QPixmap] = {}
+        self._cache: Dict[str, QtGui.QPixmap] = {}
 
     def get_or_enqueue(self, path: str):
         with self._lock:
@@ -133,7 +134,7 @@ class ThumbnailCache(QtCore.QObject):
                 thumb = canvas
             return thumb
 
-        def task_done(fut: "concurrent.futures.Future[QtGui.QPixmap | None]"):
+        def task_done(fut: "concurrent.futures.Future[Optional[QtGui.QPixmap]]"):
             thumb = fut.result()
             if thumb is None:
                 return
@@ -158,8 +159,8 @@ class ImageGrid(QtWidgets.QWidget):
         self.stats = stats
         self.cache = cache
         self.cache.thumbnail_ready.connect(self._on_thumb_ready)
-        self.paths: list[str] = []
-        self.queue: list[str] = []
+        self.paths: List[str] = []
+        self.queue: List[str] = []
         self.total_deleted = 0
         self.total_kept = 0
         self.total_seen = 0
@@ -170,16 +171,16 @@ class ImageGrid(QtWidgets.QWidget):
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(16)
 
-        self.slots: list[list[ImageSlot]] = []
+        self.slots: List[List[ImageSlot]] = []
         for r in range(GRID_ROWS):
-            row_widgets: list[ImageSlot] = []
+            row_widgets: List[ImageSlot] = []
             for c in range(GRID_COLS):
                 slot = ImageSlot()
                 grid.addWidget(slot, r, c)
                 row_widgets.append(slot)
             self.slots.append(row_widgets)
 
-    def set_images(self, paths: list[str]):
+    def set_images(self, paths: List[str]):
         self.paths = list(paths)
         self.queue = list(paths)
         self.total_deleted = 0
@@ -198,7 +199,7 @@ class ImageGrid(QtWidgets.QWidget):
             seen=self.total_seen,
         )
 
-    def _next_image(self) -> str | None:
+    def _next_image(self) -> Optional[str]:
         if not self.queue:
             return None
         return self.queue.pop(0)
@@ -238,7 +239,7 @@ class ImageGrid(QtWidgets.QWidget):
             return
         super().keyPressEvent(event)
 
-    def _delete_many(self, coords: list[tuple[int, int]]):
+    def _delete_many(self, coords: List[Tuple[int, int]]):
         for r, c in coords:
             self._delete_at(r, c, refresh_stats=False)
         self._refresh_stats()
@@ -328,7 +329,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _load_folder(self, folder: str):
         exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
-        paths: list[str] = []
+        paths: List[str] = []
         p = Path(folder)
         if p.exists() and p.is_dir():
             for entry in sorted(p.iterdir()):
