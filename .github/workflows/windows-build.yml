@@ -46,9 +46,6 @@ jobs:
         shell: pwsh
         run: upx --best --lzma dist\GridImgViewer.exe
 
-      - name: UPX compress
-        run: C:\\ProgramData\\chocolatey\\lib\\upx\\tools\\upx.exe --best --lzma dist\GridImgViewer.exe
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
