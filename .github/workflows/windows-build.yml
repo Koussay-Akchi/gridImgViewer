@@ -25,7 +25,8 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
 
-      - name: Build EXE with Nuitka (onefile)
+      - name: Build EXE with Nuitka
+        shell: bash
         run: |
           python -m nuitka \
             --onefile \
@@ -38,6 +39,9 @@ jobs:
             --output-filename=GridImgViewer.exe \
             --onefile-compression=lzma \
             main.py
+
+      - name: UPX compress
+        run: C:\\ProgramData\\chocolatey\\lib\\upx\\tools\\upx.exe --best --lzma dist\GridImgViewer.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
