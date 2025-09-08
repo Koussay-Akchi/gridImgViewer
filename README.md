@@ -3,7 +3,7 @@
 Simple, fast 2x2 image triage tool.
 Open a folder, view four thumbnails, delete with hotkeys, undo, calculate stats. Built with Python (Tkinter).
 
-![Screenshot](screenshot.png)
+![Screenshot](Screenshot.png)
 
 ## Features
 - Fullscreen, centered 2x2 grid with normalized thumbnails
