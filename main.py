@@ -149,9 +149,9 @@ class ThumbnailCache(QtCore.QObject):
 class ImageGrid(QtWidgets.QWidget):
     corner_map = {
         'h': (0, 0),
-        'G': (0, GRID_COLS - 1),
-        'K': (GRID_ROWS - 1, 0),
-        'L': (GRID_ROWS - 1, GRID_COLS - 1),
+        'G': (0, 1),
+        'K': (1, 0),
+        'L': (1, 1),
     }
 
     def __init__(self, stats: StatsBar, cache: ThumbnailCache):
@@ -229,13 +229,21 @@ class ImageGrid(QtWidgets.QWidget):
                     slot.set_pixmap(pix)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent):
-        key = event.text()
-        if key in self.corner_map:
-            r, c = self.corner_map[key]
-            self._delete_at(r, c)
+        key_code = event.key()
+        if key_code == QtCore.Qt.Key_H:
+            self._delete_at(0, 0)
             return
-        if event.key() in (QtCore.Qt.Key_M,):
-            self._delete_many([(0, 0), (0, GRID_COLS - 1), (GRID_ROWS - 1, 0), (GRID_ROWS - 1, GRID_COLS - 1)])
+        if key_code == QtCore.Qt.Key_G:
+            self._delete_at(0, 1)
+            return
+        if key_code == QtCore.Qt.Key_K:
+            self._delete_at(1, 0)
+            return
+        if key_code == QtCore.Qt.Key_L:
+            self._delete_at(1, 1)
+            return
+        if key_code == QtCore.Qt.Key_M:
+            self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
             return
         super().keyPressEvent(event)
 
