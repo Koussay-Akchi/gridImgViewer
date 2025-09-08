@@ -14,7 +14,7 @@ from send2trash import send2trash
 
 CONFIG_START_DIR = ""
 DEFAULT_START_DIR = str(Path.home())
-THUMBNAIL_SIZE = QtCore.QSize(256, 256)
+THUMBNAIL_SIZE = QtCore.QSize(320, 320)
 GRID_ROWS = 2
 GRID_COLS = 2
 MAX_WORKERS = max(4, (os.cpu_count() or 4))
@@ -171,6 +171,7 @@ class ImageGrid(QtWidgets.QWidget):
         grid.setContentsMargins(24, 12, 24, 24)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(16)
+        grid.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
 
         self.slots: List[List[ImageSlot]] = []
         for r in range(GRID_ROWS):
