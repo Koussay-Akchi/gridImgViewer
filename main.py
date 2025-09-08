@@ -6,6 +6,7 @@ import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict
+import json
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from send2trash import send2trash
@@ -233,7 +234,7 @@ class ImageGrid(QtWidgets.QWidget):
         if key_code == QtCore.Qt.Key_H:
             self._delete_at(0, 0)
             return
-        if key_code == QtCore.Qt.Key_G:
+        if key_code == QtCore.Qt.Key_J:
             self._delete_at(0, 1)
             return
         if key_code == QtCore.Qt.Key_K:
@@ -312,6 +313,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def showEvent(self, event: QtGui.QShowEvent):
         super().showEvent(event)
         QtCore.QTimer.singleShot(0, self.grid.setFocus)
+        QtCore.QTimer.singleShot(0, self._auto_open_or_load)
 
     def _apply_style(self):
         self.setStyleSheet(
@@ -326,14 +328,16 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _open_folder(self):
-        start_dir = CONFIG_START_DIR or os.environ.get("VIEWER_START_DIR", DEFAULT_START_DIR)
+        start_dir = self._get_initial_dir()
         dlg = QtWidgets.QFileDialog(self, "Select Folder", start_dir)
         dlg.setFileMode(QtWidgets.QFileDialog.Directory)
         dlg.setOption(QtWidgets.QFileDialog.ShowDirsOnly, True)
         if dlg.exec():
             dirs = dlg.selectedFiles()
             if dirs:
-                self._load_folder(dirs[0])
+                chosen = dirs[0]
+                self._persist_last_dir(chosen)
+                self._load_folder(chosen)
 
     def _load_folder(self, folder: str):
         exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
@@ -344,6 +348,51 @@ class MainWindow(QtWidgets.QMainWindow):
                 if entry.is_file() and entry.suffix.lower() in exts:
                     paths.append(str(entry))
         self.grid.set_images(paths)
+
+    def _appdata_dir(self) -> Path:
+        base = os.getenv("APPDATA")
+        if not base:
+            base = str(Path.home())
+        app_dir = Path(base) / "gridImgViewer"
+        app_dir.mkdir(parents=True, exist_ok=True)
+        return app_dir
+
+    def _last_dir_file(self) -> Path:
+        return self._appdata_dir() / "last_dir.txt"
+
+    def _read_last_dir(self) -> Optional[str]:
+        try:
+            f = self._last_dir_file()
+            if f.exists():
+                txt = f.read_text(encoding="utf-8").strip()
+                return txt or None
+        except Exception:
+            return None
+        return None
+
+    def _persist_last_dir(self, folder: str):
+        try:
+            self._last_dir_file().write_text(folder, encoding="utf-8")
+        except Exception:
+            pass
+
+    def _get_initial_dir(self) -> str:
+        if CONFIG_START_DIR:
+            return CONFIG_START_DIR
+        env_dir = os.environ.get("VIEWER_START_DIR")
+        if env_dir:
+            return env_dir
+        last = self._read_last_dir()
+        if last and Path(last).exists():
+            return last
+        return DEFAULT_START_DIR
+
+    def _auto_open_or_load(self):
+        last = self._read_last_dir()
+        if last and Path(last).exists():
+            self._load_folder(last)
+            return
+        self._open_folder()
 
 
 def main():
