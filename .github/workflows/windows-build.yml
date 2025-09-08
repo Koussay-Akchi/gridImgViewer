@@ -23,10 +23,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
-
-      - name: Build EXE with PyInstaller
+      - name: Install UPX
         run: |
-          pyinstaller --noconfirm --clean --windowed --onefile --name GridImgViewer --collect-all PySide6 main.py
+          choco install upx -y
+
+      - name: Build EXE with PyInstaller (spec)
+        env:
+          UPX_DIR: C:\\ProgramData\\chocolatey\\lib\\upx\\tools
+        run: |
+          pyinstaller --noconfirm --clean pyinstaller.spec --upx-dir "%UPX_DIR%"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
