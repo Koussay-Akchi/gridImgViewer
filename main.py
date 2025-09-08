@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict
 import json
+import hashlib
+import shutil
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from send2trash import send2trash
@@ -171,6 +173,7 @@ class ImageGrid(QtWidgets.QWidget):
         self.total_deleted = 0
         self.total_kept = 0
         self.total_seen = 0
+        self.undo_stack: List[List[Tuple[int, int, str, str]]] = []
 
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         grid = QtWidgets.QGridLayout(self)
@@ -253,27 +256,91 @@ class ImageGrid(QtWidgets.QWidget):
         if key_code == QtCore.Qt.Key_M:
             self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
             return
+        if key_code == QtCore.Qt.Key_Z:
+            self._undo_last()
+            return
         super().keyPressEvent(event)
 
-    def _delete_many(self, coords: List[Tuple[int, int]]):
-        for r, c in coords:
-            self._delete_at(r, c, refresh_stats=False)
-        self._refresh_stats()
-
-    def _delete_at(self, r: int, c: int, refresh_stats: bool = True):
-        slot = self.slots[r][c]
-        path = slot.path()
-        if path is None:
+    def _undo_last(self):
+        if not self.undo_stack:
             QtWidgets.QApplication.beep()
             return
-        try:
-            send2trash(path)
-            self.total_deleted += 1
-        except Exception:
-            pass
-        self._fill_slot(r, c)
-        if refresh_stats:
+        batch = self.undo_stack.pop()
+        restored_any = False
+        for r, c, original_path, backup_path in batch:
+            if not backup_path or not Path(backup_path).exists():
+                continue
+            try:
+                restored_path = original_path
+                
+                op = Path(restored_path)
+                if op.exists():
+                    stem, suffix = op.stem, op.suffix
+                    i = 1
+                    while True:
+                        candidate = op.with_name(f"{stem}_restored_{i}{suffix}")
+                        if not candidate.exists():
+                            restored_path = str(candidate)
+                            break
+                        i += 1
+                shutil.copy2(backup_path, restored_path)
+                self._insert_into_slot(r, c, restored_path)
+                restored_any = True
+                self.total_deleted = max(0, self.total_deleted - 1)
+            except Exception:
+                pass
+        if restored_any:
             self._refresh_stats()
+
+    def _insert_into_slot(self, r: int, c: int, path: str):
+        slot = self.slots[r][c]
+        slot.set_path(path)
+        self.cache.get_or_enqueue(path)
+
+    def _delete_many(self, coords: List[Tuple[int, int]]):
+        self._delete_slots(coords)
+
+    def _delete_at(self, r: int, c: int, refresh_stats: bool = True):
+        self._delete_slots([(r, c)])
+
+    def _delete_slots(self, coords: List[Tuple[int, int]]):
+        batch: List[Tuple[int, int, str, str]] = []
+        for r, c in coords:
+            slot = self.slots[r][c]
+            path = slot.path()
+            if path is None:
+                QtWidgets.QApplication.beep()
+                continue
+            backup_path = self._backup_for_path(path)
+            try:
+                shutil.copy2(path, backup_path)
+            except Exception:
+                backup_path = ""
+            try:
+                send2trash(path)
+                self.total_deleted += 1
+            except Exception:
+                pass
+            batch.append((r, c, path, backup_path))
+        if batch:
+            self.undo_stack.append(batch)
+        for r, c, _, _ in batch:
+            self._fill_slot(r, c)
+        self._refresh_stats()
+
+    def _backup_dir(self) -> Path:
+        base = os.getenv("APPDATA")
+        if not base:
+            base = str(Path.home())
+        d = Path(base) / "gridImgViewer" / "session_restore"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _backup_for_path(self, original_path: str) -> str:
+        h = hashlib.sha1(original_path.encode("utf-8", errors="ignore")).hexdigest()
+        ext = Path(original_path).suffix
+        target = self._backup_dir() / f"{h}{ext}"
+        return str(target)
 
 
 class TopBar(QtWidgets.QWidget):
