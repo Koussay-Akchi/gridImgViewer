@@ -1,89 +1,77 @@
 import os
 import sys
-import math
 import threading
-import concurrent.futures
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from typing import Optional, List, Tuple, Dict
-import json
+import queue
 import hashlib
 import shutil
+from pathlib import Path
+from typing import Optional, List, Tuple, Dict
+from concurrent.futures import ThreadPoolExecutor
 
-from PySide6 import QtCore, QtGui, QtWidgets
+import tkinter as tk
+from tkinter import ttk, filedialog
+from PIL import Image, ImageTk, ImageOps
 from send2trash import send2trash
 
 
 CONFIG_START_DIR = ""
-DEFAULT_START_DIR = str(Path.home())
-THUMBNAIL_SIZE = QtCore.QSize(320, 320)
+THUMBNAIL_SIZE = (320, 320)
 GRID_ROWS = 2
 GRID_COLS = 2
 MAX_WORKERS = max(4, (os.cpu_count() or 4))
 
 
-class ImageSlot(QtWidgets.QFrame):
-    activated = QtCore.Signal()
-
+class ThumbnailCache:
     def __init__(self):
-        super().__init__()
-        self.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.setObjectName("imageSlot")
-        self._path = None
-        self._seen = False
+        self._cache: Dict[str, ImageTk.PhotoImage] = {}
+        self._lock = threading.Lock()
+        self._executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
-        self.label = QtWidgets.QLabel()
-        self.label.setAlignment(QtCore.Qt.AlignCenter)
-        self.label.setObjectName("imageLabel")
-        self.label.setMinimumSize(THUMBNAIL_SIZE)
-        self.label.setMaximumSize(THUMBNAIL_SIZE)
-        self.label.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.label)
-
-    def mousePressEvent(self, event: QtGui.QMouseEvent):
-        if event.button() == QtCore.Qt.LeftButton and self._path:
-            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(self._path))
+    def get_or_submit(self, path: str, callback):
+        with self._lock:
+            pix = self._cache.get(path)
+        if pix is not None:
+            callback(path, pix)
             return
-        super().mousePressEvent(event)
 
-    def set_path(self, path: Optional[str]):
-        self._path = path
-        self._seen = self._seen or (path is not None)
+        def load_thumb(p: str) -> Optional[ImageTk.PhotoImage]:
+            try:
+                im = Image.open(p)
+                im = ImageOps.exif_transpose(im)
+                im.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+                canvas = Image.new("RGBA", THUMBNAIL_SIZE, (0, 0, 0, 0))
+                x = (THUMBNAIL_SIZE[0] - im.width) // 2
+                y = (THUMBNAIL_SIZE[1] - im.height) // 2
+                canvas.paste(im, (x, y))
+                return ImageTk.PhotoImage(canvas)
+            except Exception:
+                return None
 
-    def path(self):
-        return self._path
+        def done(fut):
+            img = fut.result()
+            if img is None:
+                return
+            with self._lock:
+                self._cache[path] = img
+            callback(path, img)
 
-    def set_pixmap(self, pix: Optional[QtGui.QPixmap]):
-        if pix is None:
-            self.label.setText(":-)")
-            self.label.setStyleSheet("color: #7a7a7a; font-size: 24px;")
-            self.label.setPixmap(QtGui.QPixmap())
-        else:
-            self.label.setText("")
-            self.label.setStyleSheet("")
-            self.label.setPixmap(pix)
+        fut = self._executor.submit(load_thumb, path)
+        fut.add_done_callback(lambda f: done(f))
 
 
-class StatsBar(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
+class StatsBar(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master)
         self.total_images = 0
         self.total_left = 0
         self.total_deleted = 0
         self.total_kept = 0
         self.total_seen = 0
-
-        self.label = QtWidgets.QLabel()
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.addWidget(self.label)
-        layout.addStretch(1)
+        self.label = ttk.Label(self, text="")
+        self.label.pack(side=tk.LEFT, padx=12, pady=8)
         self.update_text()
 
-    def update_stats(self, *, total=None, left=None, deleted=None, kept=None, seen=None):
+    def update_stats(self, total=None, left=None, deleted=None, kept=None, seen=None):
         if total is not None:
             self.total_images = total
         if left is not None:
@@ -102,118 +90,119 @@ class StatsBar(QtWidgets.QWidget):
         pct_deleted_of_seen = (self.total_deleted / seen_nonzero * 100.0)
         kept = max(0, self.total_seen - self.total_deleted)
         self.total_kept = kept
-        self.label.setText(
-            f"Total: {self.total_images} | Left: {self.total_left} | Deleted: {self.total_deleted} | Kept: {kept} | Seen: {pct_seen:.1f}% | Deleted/Seen: {pct_deleted_of_seen:.1f}%"
-        )
+        self.label.configure(text=f"Total: {self.total_images} | Left: {self.total_left} | Deleted: {self.total_deleted} | Kept: {kept} | Seen: {pct_seen:.1f}% | Deleted/Seen: {pct_deleted_of_seen:.1f}%")
 
 
-class ThumbnailCache(QtCore.QObject):
-    thumbnail_ready = QtCore.Signal(str, QtGui.QPixmap)
+class ImageSlot(ttk.Frame):
+    def __init__(self, master, on_click):
+        super().__init__(master)
+        self._path: Optional[str] = None
+        self._photo: Optional[ImageTk.PhotoImage] = None
+        self.label = ttk.Label(self, anchor=tk.CENTER)
+        self.label.pack(expand=True, fill=tk.BOTH)
+        self.label.bind("<Button-1>", self._handle_click)
+        self._on_click = on_click
+        self.configure(padding=2)
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-        self._lock = threading.Lock()
-        self._cache: Dict[str, QtGui.QPixmap] = {}
+    def set_path(self, path: Optional[str]):
+        self._path = path
 
-    def get_or_enqueue(self, path: str):
-        with self._lock:
-            pix = self._cache.get(path)
-        if pix is not None:
-            self.thumbnail_ready.emit(path, pix)
-            return
+    def path(self) -> Optional[str]:
+        return self._path
 
-        def load_thumb(p: str):
-            image_reader = QtGui.QImageReader(p)
-            image_reader.setAutoTransform(True)
-            image_reader.setScaledSize(THUMBNAIL_SIZE)
-            image = image_reader.read()
-            if image.isNull():
-                return None
-            thumb = QtGui.QPixmap.fromImage(image)
-            if thumb.size() != THUMBNAIL_SIZE:
-                thumb = thumb.scaled(THUMBNAIL_SIZE, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-                canvas = QtGui.QPixmap(THUMBNAIL_SIZE)
-                canvas.fill(QtCore.Qt.transparent)
-                painter = QtGui.QPainter(canvas)
-                x = (THUMBNAIL_SIZE.width() - thumb.width()) // 2
-                y = (THUMBNAIL_SIZE.height() - thumb.height()) // 2
-                painter.drawPixmap(x, y, thumb)
-                painter.end()
-                thumb = canvas
-            return thumb
+    def set_pixmap(self, photo: Optional[ImageTk.PhotoImage]):
+        self._photo = photo
+        if photo is None:
+            self.label.configure(text=":-)")
+            self.label.configure(image="")
+        else:
+            self.label.configure(text="")
+            self.label.configure(image=photo)
 
-        def task_done(fut: "concurrent.futures.Future[Optional[QtGui.QPixmap]]"):
-            thumb = fut.result()
-            if thumb is None:
-                return
-            with self._lock:
-                self._cache[path] = thumb
-            self.thumbnail_ready.emit(path, thumb)
-
-        fut = self.executor.submit(load_thumb, path)
-        fut.add_done_callback(task_done)
+    def _handle_click(self, _):
+        if self._path:
+            try:
+                os.startfile(self._path)
+            except Exception:
+                pass
 
 
-class ImageGrid(QtWidgets.QWidget):
-    corner_map = {
-        'h': (0, 0),
-        'G': (0, 1),
-        'K': (1, 0),
-        'L': (1, 1),
-    }
-
-    def __init__(self, stats: StatsBar, cache: ThumbnailCache):
+class App(tk.Tk):
+    def __init__(self):
         super().__init__()
-        self.stats = stats
-        self.cache = cache
-        self.cache.thumbnail_ready.connect(self._on_thumb_ready)
+        self.title("GridImgViewer")
+        self.state("zoomed")
+        self.configure(bg="#0f1115")
+        self.style = ttk.Style(self)
+        self.style.theme_use("clam")
+        self.style.configure("TFrame", background="#0f1115")
+        self.style.configure("TLabel", background="#0f1115", foreground="#e6e6e6")
+        self.style.configure("TButton", background="#2a2f3a", foreground="#e6e6e6")
+
+        self.cache = ThumbnailCache()
         self.paths: List[str] = []
-        self.queue: List[str] = []
+        self.queue_paths: List[str] = []
         self.total_deleted = 0
-        self.total_kept = 0
         self.total_seen = 0
         self.undo_stack: List[List[Tuple[int, int, str, str]]] = []
 
-        self.setFocusPolicy(QtCore.Qt.StrongFocus)
-        grid = QtWidgets.QGridLayout(self)
-        grid.setContentsMargins(24, 12, 24, 24)
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(16)
-        grid.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+        top = ttk.Frame(self)
+        top.pack(side=tk.TOP, fill=tk.X)
+        self.open_button = ttk.Button(top, text="Open", command=self._open_folder)
+        self.open_button.pack(side=tk.LEFT, padx=16, pady=10)
+
+        self.stats = StatsBar(self)
+        self.stats.pack(side=tk.TOP, fill=tk.X)
+
+        center = ttk.Frame(self)
+        center.pack(expand=True)
+        grid_container = ttk.Frame(center)
+        grid_container.pack(expand=True)
 
         self.slots: List[List[ImageSlot]] = []
         for r in range(GRID_ROWS):
             row_widgets: List[ImageSlot] = []
             for c in range(GRID_COLS):
-                slot = ImageSlot()
-                grid.addWidget(slot, r, c)
+                slot = ImageSlot(grid_container, on_click=self._on_slot_click)
+                slot.grid(row=r, column=c, padx=12, pady=12)
                 row_widgets.append(slot)
             self.slots.append(row_widgets)
 
-    def set_images(self, paths: List[str]):
-        self.paths = list(paths)
-        self.queue = list(paths)
-        self.total_deleted = 0
-        self.total_kept = 0
-        self.total_seen = 0
-        self._refresh_stats()
-        self._fill_all()
-        self.setFocus()
+        self.bind_all("<Key>", self._on_key)
+        self.after(0, self._auto_open_or_load)
+
+    def _on_slot_click(self, _slot: ImageSlot):
+        pass
+
+    def _on_key(self, event):
+        key = event.keysym.lower()
+        if key == "h":
+            self._delete_at(0, 0)
+            return
+        if key == "g":
+            self._delete_at(0, 1)
+            return
+        if key == "k":
+            self._delete_at(1, 0)
+            return
+        if key == "l":
+            self._delete_at(1, 1)
+            return
+        if key == "m":
+            self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
+            return
+        if key == "z":
+            self._undo_last()
+            return
 
     def _refresh_stats(self):
         self.stats.update_stats(
             total=len(self.paths),
-            left=len(self.queue),
+            left=len(self.queue_paths),
             deleted=self.total_deleted,
-            kept=self.total_kept,
+            kept=max(0, self.total_seen - self.total_deleted),
             seen=self.total_seen,
         )
-
-    def _next_image(self) -> Optional[str]:
-        if not self.queue:
-            return None
-        return self.queue.pop(0)
 
     def _fill_all(self):
         for r in range(GRID_ROWS):
@@ -228,42 +217,53 @@ class ImageGrid(QtWidgets.QWidget):
             slot.set_pixmap(None)
         else:
             self.total_seen += 1
-            self.cache.get_or_enqueue(path)
+            self.cache.get_or_submit(path, lambda p, img: self._on_thumb_ready(r, c, p, img))
         self._refresh_stats()
 
-    @QtCore.Slot(str, QtGui.QPixmap)
-    def _on_thumb_ready(self, path: str, pix: QtGui.QPixmap):
-        for r in range(GRID_ROWS):
-            for c in range(GRID_COLS):
-                slot = self.slots[r][c]
-                if slot.path() == path:
-                    slot.set_pixmap(pix)
+    def _on_thumb_ready(self, r: int, c: int, path: str, photo: ImageTk.PhotoImage):
+        slot = self.slots[r][c]
+        if slot.path() == path:
+            slot.set_pixmap(photo)
 
-    def keyPressEvent(self, event: QtGui.QKeyEvent):
-        key_code = event.key()
-        if key_code == QtCore.Qt.Key_H:
-            self._delete_at(0, 0)
-            return
-        if key_code == QtCore.Qt.Key_J:
-            self._delete_at(0, 1)
-            return
-        if key_code == QtCore.Qt.Key_K:
-            self._delete_at(1, 0)
-            return
-        if key_code == QtCore.Qt.Key_L:
-            self._delete_at(1, 1)
-            return
-        if key_code == QtCore.Qt.Key_M:
-            self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
-            return
-        if key_code == QtCore.Qt.Key_Z:
-            self._undo_last()
-            return
-        super().keyPressEvent(event)
+    def _next_image(self) -> Optional[str]:
+        if not self.queue_paths:
+            return None
+        return self.queue_paths.pop(0)
+
+    def _delete_many(self, coords: List[Tuple[int, int]]):
+        self._delete_slots(coords)
+
+    def _delete_at(self, r: int, c: int):
+        self._delete_slots([(r, c)])
+
+    def _delete_slots(self, coords: List[Tuple[int, int]]):
+        batch: List[Tuple[int, int, str, str]] = []
+        for r, c in coords:
+            slot = self.slots[r][c]
+            path = slot.path()
+            if path is None:
+                self.bell()
+                continue
+            backup_path = self._backup_for_path(path)
+            try:
+                shutil.copy2(path, backup_path)
+            except Exception:
+                backup_path = ""
+            try:
+                send2trash(path)
+                self.total_deleted += 1
+            except Exception:
+                pass
+            batch.append((r, c, path, backup_path))
+        if batch:
+            self.undo_stack.append(batch)
+        for r, c, _, _ in batch:
+            self._fill_slot(r, c)
+        self._refresh_stats()
 
     def _undo_last(self):
         if not self.undo_stack:
-            QtWidgets.QApplication.beep()
+            self.bell()
             return
         batch = self.undo_stack.pop()
         restored_any = False
@@ -272,7 +272,6 @@ class ImageGrid(QtWidgets.QWidget):
                 continue
             try:
                 restored_path = original_path
-                
                 op = Path(restored_path)
                 if op.exists():
                     stem, suffix = op.stem, op.suffix
@@ -295,38 +294,33 @@ class ImageGrid(QtWidgets.QWidget):
     def _insert_into_slot(self, r: int, c: int, path: str):
         slot = self.slots[r][c]
         slot.set_path(path)
-        self.cache.get_or_enqueue(path)
+        self.cache.get_or_submit(path, lambda p, img: self._on_thumb_ready(r, c, p, img))
 
-    def _delete_many(self, coords: List[Tuple[int, int]]):
-        self._delete_slots(coords)
+    def _open_folder(self):
+        initial_dir = self._get_initial_dir()
+        folder = filedialog.askdirectory(initialdir=initial_dir, mustexist=True, title="Select Folder")
+        if folder:
+            self._persist_last_dir(folder)
+            self._load_folder(folder)
 
-    def _delete_at(self, r: int, c: int, refresh_stats: bool = True):
-        self._delete_slots([(r, c)])
-
-    def _delete_slots(self, coords: List[Tuple[int, int]]):
-        batch: List[Tuple[int, int, str, str]] = []
-        for r, c in coords:
-            slot = self.slots[r][c]
-            path = slot.path()
-            if path is None:
-                QtWidgets.QApplication.beep()
-                continue
-            backup_path = self._backup_for_path(path)
-            try:
-                shutil.copy2(path, backup_path)
-            except Exception:
-                backup_path = ""
-            try:
-                send2trash(path)
-                self.total_deleted += 1
-            except Exception:
-                pass
-            batch.append((r, c, path, backup_path))
-        if batch:
-            self.undo_stack.append(batch)
-        for r, c, _, _ in batch:
-            self._fill_slot(r, c)
+    def _load_folder(self, folder: str):
+        exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
+        paths: List[str] = []
+        p = Path(folder)
+        if p.exists() and p.is_dir():
+            for entry in sorted(p.iterdir()):
+                if entry.is_file() and entry.suffix.lower() in exts:
+                    paths.append(str(entry))
+        self.paths = paths
+        self.queue_paths = list(paths)
+        self.total_deleted = 0
+        self.total_seen = 0
+        for r in range(GRID_ROWS):
+            for c in range(GRID_COLS):
+                self.slots[r][c].set_pixmap(None)
+                self.slots[r][c].set_path(None)
         self._refresh_stats()
+        self._fill_all()
 
     def _backup_dir(self) -> Path:
         base = os.getenv("APPDATA")
@@ -341,87 +335,6 @@ class ImageGrid(QtWidgets.QWidget):
         ext = Path(original_path).suffix
         target = self._backup_dir() / f"{h}{ext}"
         return str(target)
-
-
-class TopBar(QtWidgets.QWidget):
-    open_requested = QtCore.Signal()
-
-    def __init__(self):
-        super().__init__()
-        self.button = QtWidgets.QPushButton("Open")
-        self.button.setCursor(QtCore.Qt.PointingHandCursor)
-        self.button.setFixedHeight(36)
-        layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(24, 16, 24, 8)
-        layout.addWidget(self.button, 0, QtCore.Qt.AlignLeft)
-        layout.addStretch(1)
-        self.button.clicked.connect(self.open_requested)
-
-
-class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("mainWindow")
-        self.setWindowTitle("Viewer")
-        self.setCursor(QtCore.Qt.ArrowCursor)
-        self.setWindowFlag(QtCore.Qt.FramelessWindowHint, False)
-        self.setWindowState(self.windowState() | QtCore.Qt.WindowFullScreen)
-
-        self.stats = StatsBar()
-        self.cache = ThumbnailCache(self)
-        self.grid = ImageGrid(self.stats, self.cache)
-        self.top = TopBar()
-        self.top.open_requested.connect(self._open_folder)
-
-        container = QtWidgets.QWidget()
-        v = QtWidgets.QVBoxLayout(container)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(0)
-        v.addWidget(self.top)
-        v.addWidget(self.stats)
-        v.addWidget(self.grid, 1)
-        self.setCentralWidget(container)
-
-        self._apply_style()
-
-    def showEvent(self, event: QtGui.QShowEvent):
-        super().showEvent(event)
-        QtCore.QTimer.singleShot(0, self.grid.setFocus)
-        QtCore.QTimer.singleShot(0, self._auto_open_or_load)
-
-    def _apply_style(self):
-        self.setStyleSheet(
-            """
-            QWidget { background-color: #0f1115; color: #e6e6e6; font-family: 'Segoe UI', 'Inter', sans-serif; font-size: 14px; }
-            QPushButton { background-color: #2a2f3a; border: 1px solid #3a4050; padding: 6px 14px; border-radius: 8px; }
-            QPushButton:hover { background-color: #343b49; }
-            QPushButton:pressed { background-color: #232833; }
-            QLabel#imageLabel { background-color: #131722; border: 1px solid #1f2430; border-radius: 12px; }
-            QWidget#imageSlot { border-radius: 12px; }
-            """
-        )
-
-    def _open_folder(self):
-        start_dir = self._get_initial_dir()
-        dlg = QtWidgets.QFileDialog(self, "Select Folder", start_dir)
-        dlg.setFileMode(QtWidgets.QFileDialog.Directory)
-        dlg.setOption(QtWidgets.QFileDialog.ShowDirsOnly, True)
-        if dlg.exec():
-            dirs = dlg.selectedFiles()
-            if dirs:
-                chosen = dirs[0]
-                self._persist_last_dir(chosen)
-                self._load_folder(chosen)
-
-    def _load_folder(self, folder: str):
-        exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
-        paths: List[str] = []
-        p = Path(folder)
-        if p.exists() and p.is_dir():
-            for entry in sorted(p.iterdir()):
-                if entry.is_file() and entry.suffix.lower() in exts:
-                    paths.append(str(entry))
-        self.grid.set_images(paths)
 
     def _appdata_dir(self) -> Path:
         base = os.getenv("APPDATA")
@@ -459,7 +372,7 @@ class MainWindow(QtWidgets.QMainWindow):
         last = self._read_last_dir()
         if last and Path(last).exists():
             return last
-        return DEFAULT_START_DIR
+        return str(Path.home())
 
     def _auto_open_or_load(self):
         last = self._read_last_dir()
@@ -470,15 +383,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 def main():
-    if getattr(sys, 'frozen', False):
-        base = getattr(sys, '_MEIPASS', Path.cwd())
-        os.chdir(base)
-    app = QtWidgets.QApplication(sys.argv)
-    app.setApplicationName("Viewer")
-    app.setOrganizationName("Viewer")
-    win = MainWindow()
-    win.showFullScreen()
-    sys.exit(app.exec())
+    app = App()
+    app.mainloop()
 
 
 if __name__ == "__main__":
