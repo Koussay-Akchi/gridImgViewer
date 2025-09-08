@@ -25,6 +25,9 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
 
+      - name: Install UPX
+        run: choco install upx -y
+
       - name: Build EXE with Nuitka
         shell: bash
         run: |
@@ -38,6 +41,10 @@ jobs:
             --output-dir=dist \
             --output-filename=GridImgViewer.exe \
             main.py
+
+      - name: UPX compress
+        shell: pwsh
+        run: upx --best --lzma dist\GridImgViewer.exe
 
       - name: UPX compress
         run: C:\\ProgramData\\chocolatey\\lib\\upx\\tools\\upx.exe --best --lzma dist\GridImgViewer.exe
