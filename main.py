@@ -132,6 +132,10 @@ class App(tk.Tk):
         super().__init__()
         self.title("GridImgViewer")
         self.state("zoomed")
+        try:
+            self.attributes('-fullscreen', True)
+        except Exception:
+            pass
         self.configure(bg="#0f1115")
         self.style = ttk.Style(self)
         self.style.theme_use("clam")
@@ -155,18 +159,41 @@ class App(tk.Tk):
         self.stats.pack(side=tk.TOP, fill=tk.X)
 
         center = ttk.Frame(self)
-        center.pack(expand=True)
-        grid_container = ttk.Frame(center)
-        grid_container.pack(expand=True)
+        center.pack(expand=True, fill=tk.BOTH)
+
+        grid_wrapper = ttk.Frame(center)
+        grid_wrapper.pack(expand=True)
+        grid_wrapper.grid_columnconfigure(0, weight=0)
+        grid_wrapper.grid_columnconfigure(1, weight=1)
+        grid_wrapper.grid_columnconfigure(2, weight=1)
+        grid_wrapper.grid_columnconfigure(3, weight=0)
+        grid_wrapper.grid_rowconfigure(0, weight=1)
+        grid_wrapper.grid_rowconfigure(1, weight=1)
 
         self.slots: List[List[ImageSlot]] = []
         for r in range(GRID_ROWS):
             row_widgets: List[ImageSlot] = []
+            # Left legend aligned with row center
+            lbl_left = ttk.Label(grid_wrapper, text=("H" if r == 0 else "K"))
+            lbl_left.configure(font=("Segoe UI Semibold", 20))
+            lbl_left.grid(row=r, column=0, padx=(16, 8), sticky="e")
             for c in range(GRID_COLS):
-                slot = ImageSlot(grid_container, on_click=self._on_slot_click)
-                slot.grid(row=r, column=c, padx=12, pady=12)
+                slot = ImageSlot(grid_wrapper, on_click=self._on_slot_click)
+                slot.grid(row=r, column=c + 1, padx=12, pady=12)
                 row_widgets.append(slot)
             self.slots.append(row_widgets)
+            # Right legend aligned with row center
+            lbl_right = ttk.Label(grid_wrapper, text=("J" if r == 0 else "L"))
+            lbl_right.configure(font=("Segoe UI Semibold", 20))
+            lbl_right.grid(row=r, column=3, padx=(8, 16), sticky="w")
+
+        side_left = ttk.Label(self, text="Z: Undo")
+        side_left.configure(font=("Segoe UI Semibold", 20))
+        side_left.place(relx=0.0, rely=0.5, anchor="w", x=16)
+
+        side_right = ttk.Label(self, text="M: Delete all")
+        side_right.configure(font=("Segoe UI Semibold", 20))
+        side_right.place(relx=1.0, rely=0.5, anchor="e", x=-16)
 
         self.bind_all("<Key>", self._on_key)
         self.after(0, self._auto_open_or_load)
@@ -179,7 +206,7 @@ class App(tk.Tk):
         if key == "h":
             self._delete_at(0, 0)
             return
-        if key == "g":
+        if key == "j":
             self._delete_at(0, 1)
             return
         if key == "k":
