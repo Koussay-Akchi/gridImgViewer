@@ -37,7 +37,6 @@ jobs:
             --assume-yes-for-downloads \
             --output-dir=dist \
             --output-filename=GridImgViewer.exe \
-            --onefile-compression=lzma \
             main.py
 
       - name: UPX compress
