@@ -177,6 +177,10 @@ class App(tk.Tk):
             lbl_left = ttk.Label(grid_wrapper, text=("H" if r == 0 else "K"))
             lbl_left.configure(font=("Segoe UI Semibold", 20))
             lbl_left.grid(row=r, column=0, padx=(16, 8), sticky="e")
+            if r == 0:
+                self.legend_H = lbl_left
+            else:
+                self.legend_K = lbl_left
             for c in range(GRID_COLS):
                 slot = ImageSlot(grid_wrapper, on_click=self._on_slot_click)
                 slot.grid(row=r, column=c + 1, padx=12, pady=12)
@@ -186,14 +190,33 @@ class App(tk.Tk):
             lbl_right = ttk.Label(grid_wrapper, text=("J" if r == 0 else "L"))
             lbl_right.configure(font=("Segoe UI Semibold", 20))
             lbl_right.grid(row=r, column=3, padx=(8, 16), sticky="w")
+            if r == 0:
+                self.legend_J = lbl_right
+            else:
+                self.legend_L = lbl_right
 
         side_left = ttk.Label(self, text="Z: Undo")
         side_left.configure(font=("Segoe UI Semibold", 20))
         side_left.place(relx=0.0, rely=0.5, anchor="w", x=16)
+        self.legend_Z = side_left
 
         side_right = ttk.Label(self, text="M: Delete all")
         side_right.configure(font=("Segoe UI Semibold", 20))
         side_right.place(relx=1.0, rely=0.5, anchor="e", x=-16)
+        self.legend_M = side_right
+
+        self.fx_key_color = "#010203"
+        self.fx_win = tk.Toplevel(self)
+        self.fx_win.overrideredirect(True)
+        try:
+            self.fx_win.attributes('-topmost', True)
+            self.fx_win.attributes('-transparentcolor', self.fx_key_color)
+        except Exception:
+            pass
+        self.fx_win.configure(bg=self.fx_key_color)
+        self.fx_canvas = tk.Canvas(self.fx_win, highlightthickness=0, bd=0, bg=self.fx_key_color)
+        self.fx_canvas.pack(fill=tk.BOTH, expand=True)
+        self.fx_win.withdraw()
 
         self.bind_all("<Key>", self._on_key)
         self.after(0, self._auto_open_or_load)
@@ -205,21 +228,27 @@ class App(tk.Tk):
         key = event.keysym.lower()
         if key == "h":
             self._delete_at(0, 0)
+            self._pulse_over_widget(self.legend_H)
             return
         if key == "j":
             self._delete_at(0, 1)
+            self._pulse_over_widget(self.legend_J)
             return
         if key == "k":
             self._delete_at(1, 0)
+            self._pulse_over_widget(self.legend_K)
             return
         if key == "l":
             self._delete_at(1, 1)
+            self._pulse_over_widget(self.legend_L)
             return
         if key == "m":
             self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
+            self._pulse_over_widget(self.legend_M)
             return
         if key == "z":
             self._undo_last()
+            self._pulse_over_widget(self.legend_Z)
             return
 
     def _refresh_stats(self):
@@ -322,6 +351,56 @@ class App(tk.Tk):
         slot = self.slots[r][c]
         slot.set_path(path)
         self.cache.get_or_submit(path, lambda p, img: self._on_thumb_ready(r, c, p, img))
+
+    def _widget_center(self, w: tk.Widget) -> Tuple[int, int, int]:
+        self.update_idletasks()
+        x = w.winfo_rootx() - self.fx_canvas.winfo_rootx()
+        y = w.winfo_rooty() - self.fx_canvas.winfo_rooty()
+        wdt = w.winfo_width()
+        hgt = w.winfo_height()
+        return x + wdt // 2, y + hgt // 2, max(wdt, hgt)
+
+    def _pulse_over_widget(self, w: tk.Widget):
+        cx, cy, _ = self._widget_center(w)
+        self._pulse_at(cx, cy, max_radius=50, duration_ms=180)
+
+    def _pulse_at(self, x: int, y: int, steps: Optional[List[int]] = None, *, max_radius: int = 50, duration_ms: int = 180):
+        color = "white"
+        self.update_idletasks()
+        gx = self.winfo_rootx()
+        gy = self.winfo_rooty()
+        gw = self.winfo_width()
+        gh = self.winfo_height()
+        self.fx_win.geometry(f"{gw}x{gh}+{gx}+{gy}")
+        self.fx_win.deiconify()
+        self.fx_canvas.delete("all")
+        oid = self.fx_canvas.create_oval(x-1, y-1, x+1, y+1, fill="", outline=color, width=3)
+
+        start_time = None
+
+        def ease_out_cubic(t: float) -> float:
+            u = 1.0 - t
+            return 1.0 - u * u * u
+
+        def animate():
+            nonlocal start_time
+            now = self.tk.call('after', 'info')
+            import time
+            if start_time is None:
+                start_time = time.perf_counter()
+            elapsed = (time.perf_counter() - start_time) * 1000.0
+            t = max(0.0, min(1.0, elapsed / float(duration_ms)))
+            r = int(ease_out_cubic(t) * max_radius)
+            if r < 1:
+                r = 1
+            self.fx_canvas.coords(oid, x - r, y - r, x + r, y + r)
+            if t >= 1.0:
+                self.fx_canvas.delete(oid)
+                self.fx_win.withdraw()
+                return
+            self.after(15, animate)
+
+        animate()
 
     def _open_folder(self):
         initial_dir = self._get_initial_dir()
