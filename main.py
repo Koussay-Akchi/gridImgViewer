@@ -41,6 +41,12 @@ class ImageSlot(QtWidgets.QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.label)
 
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        if event.button() == QtCore.Qt.LeftButton and self._path:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(self._path))
+            return
+        super().mousePressEvent(event)
+
     def set_path(self, path: Optional[str]):
         self._path = path
         self._seen = self._seen or (path is not None)
