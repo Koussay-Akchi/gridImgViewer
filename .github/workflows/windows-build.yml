@@ -28,7 +28,7 @@ jobs:
         run: |
           choco install upx -y
 
-      - name: Build EXE with PyInstaller (Tkinter onefile spec)
+      - name: Build EXE with PyInstaller
         env:
           UPX_DIR: C:\\ProgramData\\chocolatey\\lib\\upx\\tools
         run: |
@@ -41,25 +41,16 @@ jobs:
           path: dist/GridImgViewer.exe
           if-no-files-found: error
 
-      - name: Create GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create GitHub Release and Upload Asset
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.run_id }}
-          release_name: GridImgViewer ${{ github.run_id }}
+          name: GridImgViewer ${{ github.run_id }}
           draft: false
           prerelease: false
-
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
+          files: |
+            dist/GridImgViewer.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dist/GridImgViewer.exe
-          asset_name: GridImgViewer.exe
-          asset_content_type: application/octet-stream
 
 
