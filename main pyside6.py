@@ -13,6 +13,12 @@ import shutil
 from PySide6 import QtCore, QtGui, QtWidgets
 from send2trash import send2trash
 
+'''
+PySide6 has a lot of bloat and produces a 200mb exe. if you want to use it add these to requirements.txt
+pyside6==6.9.2
+pyside6_addons==6.9.2
+pyside6_essentials==6.9.2
+'''
 
 CONFIG_START_DIR = ""
 DEFAULT_START_DIR = str(Path.home())
