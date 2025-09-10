@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import tkinter as tk
 from tkinter import ttk, filedialog
+import ttkbootstrap as tb
 from PIL import Image, ImageTk, ImageOps
 from send2trash import send2trash
 
@@ -127,6 +128,9 @@ class ImageSlot(ttk.Frame):
                 pass
 
 
+class ToggleSwitch(ttk.Frame):
+    pass
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -142,6 +146,9 @@ class App(tk.Tk):
         self.style.configure("TFrame", background="#0f1115")
         self.style.configure("TLabel", background="#0f1115", foreground="#e6e6e6")
         self.style.configure("TButton", background="#2a2f3a", foreground="#e6e6e6")
+        self.bs = tb.Style(theme="darkly")
+
+        self._cleanup_session_restore()
 
         self.cache = ThumbnailCache()
         self.paths: List[str] = []
@@ -154,6 +161,21 @@ class App(tk.Tk):
         top.pack(side=tk.TOP, fill=tk.X)
         self.open_button = ttk.Button(top, text="Open", command=self._open_folder)
         self.open_button.pack(side=tk.LEFT, padx=16, pady=10)
+        
+        self.mode_delete = self._read_last_mode()
+        self.mode_var = tk.BooleanVar(value=self.mode_delete)
+        init_text = "Delete mode" if self.mode_var.get() else "Open mode"
+        init_style = "danger round-toggle" if self.mode_var.get() else "success round-toggle"
+        self.mode_button = tb.Checkbutton(
+            top,
+            text=init_text,
+            variable=self.mode_var,
+            command=self._on_mode_changed,
+            bootstyle=init_style,
+            padding=(20, 12),
+            width=24,
+        )
+        self.mode_button.pack(side=tk.LEFT, padx=8, pady=10)
 
         self.stats = StatsBar(self)
         self.stats.pack(side=tk.TOP, fill=tk.X)
@@ -173,7 +195,6 @@ class App(tk.Tk):
         self.slots: List[List[ImageSlot]] = []
         for r in range(GRID_ROWS):
             row_widgets: List[ImageSlot] = []
-            # Left legend aligned with row center
             lbl_left = ttk.Label(grid_wrapper, text=("H" if r == 0 else "K"))
             lbl_left.configure(font=("Segoe UI Semibold", 20))
             lbl_left.grid(row=r, column=0, padx=(16, 8), sticky="e")
@@ -186,7 +207,6 @@ class App(tk.Tk):
                 slot.grid(row=r, column=c + 1, padx=12, pady=12)
                 row_widgets.append(slot)
             self.slots.append(row_widgets)
-            # Right legend aligned with row center
             lbl_right = ttk.Label(grid_wrapper, text=("J" if r == 0 else "L"))
             lbl_right.configure(font=("Segoe UI Semibold", 20))
             lbl_right.grid(row=r, column=3, padx=(8, 16), sticky="w")
@@ -217,9 +237,19 @@ class App(tk.Tk):
         self.fx_canvas = tk.Canvas(self.fx_win, highlightthickness=0, bd=0, bg=self.fx_key_color)
         self.fx_canvas.pack(fill=tk.BOTH, expand=True)
         self.fx_win.withdraw()
+        
+        self.after(0, self._on_mode_changed)
 
         self.bind_all("<Key>", self._on_key)
         self.after(0, self._auto_open_or_load)
+
+    def _cleanup_session_restore(self):
+        try:
+            restore_dir = self._backup_dir()
+            if restore_dir.exists():
+                shutil.rmtree(restore_dir)
+        except Exception:
+            pass
 
     def _on_slot_click(self, _slot: ImageSlot):
         pass
@@ -227,19 +257,31 @@ class App(tk.Tk):
     def _on_key(self, event):
         key = event.keysym.lower()
         if key == "h":
-            self._delete_at(0, 0)
+            if self.mode_delete:
+                self._delete_at(0, 0)
+            else:
+                self._open_at(0, 0)
             self._pulse_over_widget(self.legend_H)
             return
         if key == "j":
-            self._delete_at(0, 1)
+            if self.mode_delete:
+                self._delete_at(0, 1)
+            else:
+                self._open_at(0, 1)
             self._pulse_over_widget(self.legend_J)
             return
         if key == "k":
-            self._delete_at(1, 0)
+            if self.mode_delete:
+                self._delete_at(1, 0)
+            else:
+                self._open_at(1, 0)
             self._pulse_over_widget(self.legend_K)
             return
         if key == "l":
-            self._delete_at(1, 1)
+            if self.mode_delete:
+                self._delete_at(1, 1)
+            else:
+                self._open_at(1, 1)
             self._pulse_over_widget(self.legend_L)
             return
         if key == "m":
@@ -409,6 +451,33 @@ class App(tk.Tk):
             self._persist_last_dir(folder)
             self._load_folder(folder)
 
+    def _on_mode_changed(self):
+        self.fx_win.configure(bg=self.fx_key_color)
+        self.fx_canvas.configure(bg=self.fx_key_color)
+        self.mode_delete = self.mode_var.get()
+        if self.mode_delete:
+            self.mode_button.configure(text="Delete mode", bootstyle="danger round-toggle", padding=(20, 12), width=24)
+            self.legend_H.configure(foreground="#e6e6e6")
+            self.legend_J.configure(foreground="#e6e6e6")
+            self.legend_K.configure(foreground="#e6e6e6")
+            self.legend_L.configure(foreground="#e6e6e6")
+        else:
+            self.mode_button.configure(text="Open mode", bootstyle="success round-toggle", padding=(20, 12), width=24)
+            self.legend_H.configure(foreground="#9be7a8")
+            self.legend_J.configure(foreground="#9be7a8")
+            self.legend_K.configure(foreground="#9be7a8")
+            self.legend_L.configure(foreground="#9be7a8")
+        self._persist_last_mode(self.mode_delete)
+
+    def _open_at(self, r: int, c: int):
+        slot = self.slots[r][c]
+        path = slot.path()
+        if path:
+            try:
+                os.startfile(path)
+            except Exception:
+                pass
+
     def _load_folder(self, folder: str):
         exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
         paths: List[str] = []
@@ -487,6 +556,25 @@ class App(tk.Tk):
             return
         self._open_folder()
 
+    def _mode_file(self) -> Path:
+        return self._appdata_dir() / "mode.txt"
+
+    def _read_last_mode(self) -> bool:
+        try:
+            f = self._mode_file()
+            if f.exists():
+                txt = f.read_text(encoding="utf-8").strip().lower()
+                return txt == "delete"
+            return True
+        except Exception:
+            return True
+
+    def _persist_last_mode(self, delete_mode: bool):
+        try:
+            self._mode_file().write_text("delete" if delete_mode else "open", encoding="utf-8")
+        except Exception:
+            pass
+
 
 def main():
     app = App()
@@ -495,4 +583,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
