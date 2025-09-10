@@ -34,6 +34,8 @@ jobs:
           python -m nuitka \
             --onefile \
             --plugin-enable=tk-inter \
+            --include-package=ttkbootstrap \
+            --include-package-data=ttkbootstrap \
             --include-module=PIL.ImageTk \
             --include-module=PIL.ImageOps \
             --windows-console-mode=disable \
