@@ -166,6 +166,8 @@ class App(tk.Tk):
         self.settings_button = ttk.Button(top, text="Settings", command=self._open_settings)
         self.settings_button.pack(side=tk.LEFT, padx=8, pady=10)
         
+        self.toggle_key_label = ttk.Label(top, text="", font=("Segoe UI", 8))
+        self.toggle_key_label.pack(side=tk.LEFT, pady=10)
         self.mode_delete = self._read_last_mode()
         self.mode_var = tk.BooleanVar(value=self.mode_delete)
         init_text = "Delete mode" if self.mode_var.get() else "Open mode"
@@ -263,7 +265,7 @@ class App(tk.Tk):
         if hasattr(self, '_settings_window') and self._settings_window and self._settings_window.winfo_exists():
             if hasattr(self, '_recording_key') and self._recording_key:
                 key = event.keysym.lower()
-                if key.isalpha() and len(key) == 1:
+                if (key.isalpha() and len(key) == 1) or key in ["shift_l", "shift_r", "ctrl_l", "ctrl_r", "alt_l", "alt_r", "space", "tab", "return", "escape"]:
                     self._finish_key_recording(key)
                 return
         
@@ -303,6 +305,10 @@ class App(tk.Tk):
         if key == self.keymap.get("undo", "z").lower():
             self._undo_last()
             self._pulse_over_widget(self.legend_Z)
+            return
+        if key == self.keymap.get("toggle_mode", "shift_l").lower():
+            self.mode_var.set(not self.mode_var.get())
+            self._on_mode_changed()
             return
 
     def _refresh_stats(self):
@@ -599,6 +605,7 @@ class App(tk.Tk):
             "bottom_right": "k",
             "undo": "z",
             "delete_all": "m",
+            "toggle_mode": "shift_l",
         }
         try:
             f = self._keymap_file()
@@ -628,6 +635,11 @@ class App(tk.Tk):
             self.legend_L.configure(text=self.keymap.get("bottom_right", "k").upper())
             self.legend_Z.configure(text=f"{self.keymap.get('undo', 'z').upper()}: Undo")
             self.legend_M.configure(text=f"{self.keymap.get('delete_all', 'm').upper()}: Delete all")
+            
+            # Update toggle key label
+            toggle_key = self.keymap.get("toggle_mode", "shift_l")
+            toggle_display = self._format_key_display(toggle_key)
+            self.toggle_key_label.configure(text=f"Toggle: {toggle_display}")
         except Exception:
             pass
 
@@ -654,15 +666,18 @@ class App(tk.Tk):
             ("bottom_right", "Bottom-Right"),
             ("undo", "Undo"),
             ("delete_all", "Delete All"),
+            ("toggle_mode", "Toggle Mode"),
         ]
         
         for idx, (key, label) in enumerate(fields):
             ttk.Label(frm, text=label).grid(row=idx, column=0, sticky="e", padx=(0,8), pady=6)
             
-            var = tk.StringVar(value=self.keymap.get(key, "").upper())
+            key_value = self.keymap.get(key, "")
+            display_value = self._format_key_display(key_value)
+            var = tk.StringVar(value=display_value)
             self._key_vars[key] = var
             
-            btn = ttk.Button(frm, textvariable=var, width=8, command=lambda k=key: self._start_key_recording(k))
+            btn = ttk.Button(frm, textvariable=var, width=12, command=lambda k=key: self._start_key_recording(k))
             btn.grid(row=idx, column=1, sticky="w", pady=6)
             self._key_buttons[key] = btn
 
@@ -675,11 +690,12 @@ class App(tk.Tk):
         def on_save():
             values = {}
             for k, var in self._key_vars.items():
-                txt = (var.get() or "").strip().lower()
-                if len(txt) != 1 or not txt.isalpha():
-                    status_var.set("Each key must be a single alphabet letter.")
+                display_txt = (var.get() or "").strip()
+                key_value = self._display_to_key_value(display_txt)
+                if not key_value:
+                    status_var.set("Each key must be a single alphabet letter or special key.")
                     return
-                values[k] = txt
+                values[k] = key_value
             # uniqueness
             used = set(values.values())
             if len(used) != len(values):
@@ -699,6 +715,49 @@ class App(tk.Tk):
         ttk.Button(btns, text="Save", command=on_save).pack(side=tk.LEFT, padx=6)
         ttk.Button(btns, text="Cancel", command=on_cancel).pack(side=tk.LEFT, padx=6)
 
+    def _format_key_display(self, key_value):
+        if not key_value:
+            return ""
+        if key_value in ["shift_l", "shift_r"]:
+            return "Shift"
+        elif key_value in ["ctrl_l", "ctrl_r"]:
+            return "Ctrl"
+        elif key_value in ["alt_l", "alt_r"]:
+            return "Alt"
+        elif key_value == "space":
+            return "Space"
+        elif key_value == "tab":
+            return "Tab"
+        elif key_value == "return":
+            return "Enter"
+        elif key_value == "escape":
+            return "Esc"
+        else:
+            return key_value.upper()
+
+    def _display_to_key_value(self, display_text):
+        if not display_text:
+            return ""
+        display_text = display_text.lower()
+        if display_text == "shift":
+            return "shift_l"
+        elif display_text == "ctrl":
+            return "ctrl_l"
+        elif display_text == "alt":
+            return "alt_l"
+        elif display_text == "space":
+            return "space"
+        elif display_text == "tab":
+            return "tab"
+        elif display_text == "enter":
+            return "return"
+        elif display_text == "esc":
+            return "escape"
+        elif display_text.isalpha() and len(display_text) == 1:
+            return display_text
+        else:
+            return ""
+
     def _start_key_recording(self, key_name):
         self._recording_key = key_name
         if key_name in self._key_buttons:
@@ -711,13 +770,20 @@ class App(tk.Tk):
         if not self._recording_key:
             return
         
-        current_values = {k: var.get().lower() for k, var in self._key_vars.items()}
+        current_values = {}
+        for k, var in self._key_vars.items():
+            if k != self._recording_key:
+                display_txt = var.get()
+                key_val = self._display_to_key_value(display_txt)
+                if key_val:
+                    current_values[k] = key_val
         if key in current_values.values():
             self._cancel_key_recording()
             return
         
         if self._recording_key in self._key_vars:
-            self._key_vars[self._recording_key].set(key.upper())
+            display_value = self._format_key_display(key)
+            self._key_vars[self._recording_key].set(display_value)
         
         self._cancel_key_recording()
 
