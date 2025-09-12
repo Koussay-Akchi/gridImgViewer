@@ -8,15 +8,15 @@ Open a folder, view four thumbnails, delete with hotkeys, undo, calculate stats.
 ## Features
 
 - Fullscreen, centered 2x2 grid with normalized thumbnails
-- Hotkeys for deleting and restoring images
-- Click a thumbnail to open in the system viewer
+- Hotkeys for deleting; opening and restoring images
+- Clickable thumbnails to open in the system viewer
 - calculate and refresh current session statistics
 - Sends deletions to system trash, instant backfill
-- Remember Last folder
+- Remember Last folder, toggle and config
 
 ## Usage
 
-- Hotkeys: H (top‑left), J (top‑right), K (bottom‑left), L (bottom‑right), M (delete all four), Z (undo)
+- Default Hotkeys: Shift (toggle delete/open mode), U (top‑left), I (top‑right), J (bottom‑left), K (bottom‑right), M (delete all four), Z (undo)
 
 ## Install
 
