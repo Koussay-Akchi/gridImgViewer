@@ -260,6 +260,13 @@ class App(tk.Tk):
         pass
 
     def _on_key(self, event):
+        if hasattr(self, '_settings_window') and self._settings_window and self._settings_window.winfo_exists():
+            if hasattr(self, '_recording_key') and self._recording_key:
+                key = event.keysym.lower()
+                if key.isalpha() and len(key) == 1:
+                    self._finish_key_recording(key)
+                return
+        
         key = event.keysym.lower()
         if key == self.keymap.get("top_left", "u").lower():
             if self.mode_delete:
@@ -625,7 +632,8 @@ class App(tk.Tk):
             pass
 
     def _open_settings(self):
-        win = tk.Toplevel(self)
+        self._settings_window = tk.Toplevel(self)
+        win = self._settings_window
         win.title("Settings")
         win.transient(self)
         try:
@@ -635,7 +643,10 @@ class App(tk.Tk):
         frm = ttk.Frame(win)
         frm.pack(padx=16, pady=16, fill=tk.BOTH, expand=True)
 
-        entries = {}
+        self._recording_key = None
+        self._key_buttons = {}
+        self._key_vars = {}
+        
         fields = [
             ("top_left", "Top-Left"),
             ("top_right", "Top-Right"),
@@ -644,12 +655,16 @@ class App(tk.Tk):
             ("undo", "Undo"),
             ("delete_all", "Delete All"),
         ]
+        
         for idx, (key, label) in enumerate(fields):
             ttk.Label(frm, text=label).grid(row=idx, column=0, sticky="e", padx=(0,8), pady=6)
-            var = tk.StringVar(value=self.keymap.get(key, "" ).upper())
-            ent = ttk.Entry(frm, textvariable=var, width=8, justify="center")
-            ent.grid(row=idx, column=1, sticky="w", pady=6)
-            entries[key] = (var, ent)
+            
+            var = tk.StringVar(value=self.keymap.get(key, "").upper())
+            self._key_vars[key] = var
+            
+            btn = ttk.Button(frm, textvariable=var, width=8, command=lambda k=key: self._start_key_recording(k))
+            btn.grid(row=idx, column=1, sticky="w", pady=6)
+            self._key_buttons[key] = btn
 
         btns = ttk.Frame(frm)
         btns.grid(row=len(fields), column=0, columnspan=2, pady=(12,0))
@@ -659,7 +674,7 @@ class App(tk.Tk):
 
         def on_save():
             values = {}
-            for k, (var, _) in entries.items():
+            for k, var in self._key_vars.items():
                 txt = (var.get() or "").strip().lower()
                 if len(txt) != 1 or not txt.isalpha():
                     status_var.set("Each key must be a single alphabet letter.")
@@ -674,13 +689,44 @@ class App(tk.Tk):
             self._persist_keymap()
             self._update_legends_from_keymap()
             status_var.set("")
+            self._settings_window = None
             win.destroy()
 
         def on_cancel():
+            self._settings_window = None
             win.destroy()
 
         ttk.Button(btns, text="Save", command=on_save).pack(side=tk.LEFT, padx=6)
         ttk.Button(btns, text="Cancel", command=on_cancel).pack(side=tk.LEFT, padx=6)
+
+    def _start_key_recording(self, key_name):
+        self._recording_key = key_name
+        if key_name in self._key_buttons:
+            self._key_buttons[key_name].configure(text="Press key...", state="disabled")
+        for k, btn in self._key_buttons.items():
+            if k != key_name:
+                btn.configure(state="disabled")
+
+    def _finish_key_recording(self, key):
+        if not self._recording_key:
+            return
+        
+        current_values = {k: var.get().lower() for k, var in self._key_vars.items()}
+        if key in current_values.values():
+            self._cancel_key_recording()
+            return
+        
+        if self._recording_key in self._key_vars:
+            self._key_vars[self._recording_key].set(key.upper())
+        
+        self._cancel_key_recording()
+
+    def _cancel_key_recording(self):
+        self._recording_key = None
+        for k, btn in self._key_buttons.items():
+            btn.configure(state="normal")
+            if k in self._key_vars:
+                btn.configure(text=self._key_vars[k].get())
 
 
 def main():
