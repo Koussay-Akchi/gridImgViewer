@@ -13,6 +13,7 @@ from tkinter import ttk, filedialog
 import ttkbootstrap as tb
 from PIL import Image, ImageTk, ImageOps
 from send2trash import send2trash
+import json
 
 
 CONFIG_START_DIR = ""
@@ -156,11 +157,14 @@ class App(tk.Tk):
         self.total_deleted = 0
         self.total_seen = 0
         self.undo_stack: List[List[Tuple[int, int, str, str]]] = []
+        self.keymap = self._read_keymap()
 
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X)
         self.open_button = ttk.Button(top, text="Open", command=self._open_folder)
         self.open_button.pack(side=tk.LEFT, padx=16, pady=10)
+        self.settings_button = ttk.Button(top, text="Settings", command=self._open_settings)
+        self.settings_button.pack(side=tk.LEFT, padx=8, pady=10)
         
         self.mode_delete = self._read_last_mode()
         self.mode_var = tk.BooleanVar(value=self.mode_delete)
@@ -195,7 +199,7 @@ class App(tk.Tk):
         self.slots: List[List[ImageSlot]] = []
         for r in range(GRID_ROWS):
             row_widgets: List[ImageSlot] = []
-            lbl_left = ttk.Label(grid_wrapper, text=("H" if r == 0 else "K"))
+            lbl_left = ttk.Label(grid_wrapper, text=("U" if r == 0 else "J"))
             lbl_left.configure(font=("Segoe UI Semibold", 20))
             lbl_left.grid(row=r, column=0, padx=(16, 8), sticky="e")
             if r == 0:
@@ -207,7 +211,7 @@ class App(tk.Tk):
                 slot.grid(row=r, column=c + 1, padx=12, pady=12)
                 row_widgets.append(slot)
             self.slots.append(row_widgets)
-            lbl_right = ttk.Label(grid_wrapper, text=("J" if r == 0 else "L"))
+            lbl_right = ttk.Label(grid_wrapper, text=("I" if r == 0 else "K"))
             lbl_right.configure(font=("Segoe UI Semibold", 20))
             lbl_right.grid(row=r, column=3, padx=(8, 16), sticky="w")
             if r == 0:
@@ -239,6 +243,7 @@ class App(tk.Tk):
         self.fx_win.withdraw()
         
         self.after(0, self._on_mode_changed)
+        self.after(0, self._update_legends_from_keymap)
 
         self.bind_all("<Key>", self._on_key)
         self.after(0, self._auto_open_or_load)
@@ -256,39 +261,39 @@ class App(tk.Tk):
 
     def _on_key(self, event):
         key = event.keysym.lower()
-        if key == "h":
+        if key == self.keymap.get("top_left", "u").lower():
             if self.mode_delete:
                 self._delete_at(0, 0)
             else:
                 self._open_at(0, 0)
             self._pulse_over_widget(self.legend_H)
             return
-        if key == "j":
+        if key == self.keymap.get("top_right", "i").lower():
             if self.mode_delete:
                 self._delete_at(0, 1)
             else:
                 self._open_at(0, 1)
             self._pulse_over_widget(self.legend_J)
             return
-        if key == "k":
+        if key == self.keymap.get("bottom_left", "j").lower():
             if self.mode_delete:
                 self._delete_at(1, 0)
             else:
                 self._open_at(1, 0)
             self._pulse_over_widget(self.legend_K)
             return
-        if key == "l":
+        if key == self.keymap.get("bottom_right", "k").lower():
             if self.mode_delete:
                 self._delete_at(1, 1)
             else:
                 self._open_at(1, 1)
             self._pulse_over_widget(self.legend_L)
             return
-        if key == "m":
+        if key == self.keymap.get("delete_all", "m").lower():
             self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
             self._pulse_over_widget(self.legend_M)
             return
-        if key == "z":
+        if key == self.keymap.get("undo", "z").lower():
             self._undo_last()
             self._pulse_over_widget(self.legend_Z)
             return
@@ -468,6 +473,7 @@ class App(tk.Tk):
             self.legend_K.configure(foreground="#9be7a8")
             self.legend_L.configure(foreground="#9be7a8")
         self._persist_last_mode(self.mode_delete)
+        self._update_legends_from_keymap()
 
     def _open_at(self, r: int, c: int):
         slot = self.slots[r][c]
@@ -574,6 +580,107 @@ class App(tk.Tk):
             self._mode_file().write_text("delete" if delete_mode else "open", encoding="utf-8")
         except Exception:
             pass
+
+    def _keymap_file(self) -> Path:
+        return self._appdata_dir() / "keys.json"
+
+    def _read_keymap(self) -> Dict[str, str]:
+        defaults = {
+            "top_left": "u",
+            "top_right": "i",
+            "bottom_left": "j",
+            "bottom_right": "k",
+            "undo": "z",
+            "delete_all": "m",
+        }
+        try:
+            f = self._keymap_file()
+            if f.exists():
+                obj = json.loads(f.read_text(encoding="utf-8"))
+                if isinstance(obj, dict):
+                    merged = defaults.copy()
+                    for k, v in obj.items():
+                        if isinstance(v, str) and k in merged and v:
+                            merged[k] = v.lower()
+                    return merged
+        except Exception:
+            pass
+        return defaults
+
+    def _persist_keymap(self):
+        try:
+            self._keymap_file().write_text(json.dumps(self.keymap, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _update_legends_from_keymap(self):
+        try:
+            self.legend_H.configure(text=self.keymap.get("top_left", "u").upper())
+            self.legend_J.configure(text=self.keymap.get("top_right", "i").upper())
+            self.legend_K.configure(text=self.keymap.get("bottom_left", "j").upper())
+            self.legend_L.configure(text=self.keymap.get("bottom_right", "k").upper())
+            self.legend_Z.configure(text=f"{self.keymap.get('undo', 'z').upper()}: Undo")
+            self.legend_M.configure(text=f"{self.keymap.get('delete_all', 'm').upper()}: Delete all")
+        except Exception:
+            pass
+
+    def _open_settings(self):
+        win = tk.Toplevel(self)
+        win.title("Settings")
+        win.transient(self)
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+        frm = ttk.Frame(win)
+        frm.pack(padx=16, pady=16, fill=tk.BOTH, expand=True)
+
+        entries = {}
+        fields = [
+            ("top_left", "Top-Left"),
+            ("top_right", "Top-Right"),
+            ("bottom_left", "Bottom-Left"),
+            ("bottom_right", "Bottom-Right"),
+            ("undo", "Undo"),
+            ("delete_all", "Delete All"),
+        ]
+        for idx, (key, label) in enumerate(fields):
+            ttk.Label(frm, text=label).grid(row=idx, column=0, sticky="e", padx=(0,8), pady=6)
+            var = tk.StringVar(value=self.keymap.get(key, "" ).upper())
+            ent = ttk.Entry(frm, textvariable=var, width=8, justify="center")
+            ent.grid(row=idx, column=1, sticky="w", pady=6)
+            entries[key] = (var, ent)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=len(fields), column=0, columnspan=2, pady=(12,0))
+        status_var = tk.StringVar(value="")
+        status_lbl = ttk.Label(frm, textvariable=status_var, foreground="#ff8080")
+        status_lbl.grid(row=len(fields)+1, column=0, columnspan=2, pady=(6,0))
+
+        def on_save():
+            values = {}
+            for k, (var, _) in entries.items():
+                txt = (var.get() or "").strip().lower()
+                if len(txt) != 1 or not txt.isalpha():
+                    status_var.set("Each key must be a single alphabet letter.")
+                    return
+                values[k] = txt
+            # uniqueness
+            used = set(values.values())
+            if len(used) != len(values):
+                status_var.set("Keys must be unique.")
+                return
+            self.keymap = values
+            self._persist_keymap()
+            self._update_legends_from_keymap()
+            status_var.set("")
+            win.destroy()
+
+        def on_cancel():
+            win.destroy()
+
+        ttk.Button(btns, text="Save", command=on_save).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="Cancel", command=on_cancel).pack(side=tk.LEFT, padx=6)
 
 
 def main():
