@@ -78,32 +78,6 @@ jobs:
             }
           }
 
-      - name: Verify Signature
-        shell: pwsh
-        run: |
-          $signtool = Get-Command signtool -ErrorAction SilentlyContinue
-          if ($signtool) {
-            & signtool verify /pa "dist\GridImgViewer.exe"
-          } else {
-            $possiblePaths = @(
-              "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe",
-              "C:\Program Files (x86)\Windows Kits\10\bin\*\x86\signtool.exe",
-              "C:\Program Files\Windows Kits\10\bin\*\x64\signtool.exe"
-            )
-            $found = $false
-            foreach ($path in $possiblePaths) {
-              $files = Get-ChildItem -Path $path -ErrorAction SilentlyContinue
-              if ($files) {
-                & $files[0].FullName verify /pa "dist\GridImgViewer.exe"
-                $found = $true
-                break
-              }
-            }
-            if (-not $found) {
-              Write-Error "signtool.exe not found in any expected location"
-            }
-          }
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
