@@ -44,9 +44,23 @@ jobs:
             --output-filename=GridImgViewer.exe \
             main.py
 
-      - name: UPX compress
+      - name: Create Self-Signed Certificate
         shell: pwsh
-        run: upx --best --lzma dist\GridImgViewer.exe
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Koussay Akchi" -KeyUsage DigitalSignature -FriendlyName "Koussay Akchi Code Signing" -CertStoreLocation "Cert:\CurrentUser\My" -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+          $pwd = ConvertTo-SecureString -String "temp123" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath "code-signing.pfx" -Password $pwd
+          echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
+      - name: Sign Executable
+        shell: pwsh
+        run: |
+          signtool sign /f "code-signing.pfx" /p "temp123" /tr "http://timestamp.digicert.com" /td sha256 /fd sha256 "dist\GridImgViewer.exe"
+
+      - name: Verify Signature
+        shell: pwsh
+        run: |
+          signtool verify /pa "dist\GridImgViewer.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
