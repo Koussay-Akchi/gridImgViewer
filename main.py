@@ -69,11 +69,12 @@ class StatsBar(ttk.Frame):
         self.total_deleted = 0
         self.total_kept = 0
         self.total_seen = 0
-        self.label = ttk.Label(self, text="")
-        self.label.pack(side=tk.TOP, padx=12, pady=(8, 0), anchor="w")
         self.path_label_var = tk.StringVar(value="")
         self.path_label = ttk.Label(self, textvariable=self.path_label_var, font=("Segoe UI", 8))
-        self.path_label.pack(side=tk.TOP, padx=0, pady=(2, 8), anchor="w")
+        self.path_label.pack(side=tk.TOP, padx=16, pady=(2, 8), anchor="w")
+        
+        self.label = ttk.Label(self, text="")
+        self.label.pack(side=tk.TOP, padx=12, pady=(8, 0), anchor="w")
         self.update_text()
 
     def update_stats(self, total=None, left=None, deleted=None, kept=None, seen=None):
@@ -93,9 +94,7 @@ class StatsBar(ttk.Frame):
         pct_seen = (self.total_seen / self.total_images * 100.0) if self.total_images else 0.0
         seen_nonzero = max(1, self.total_seen)
         pct_deleted_of_seen = (self.total_deleted / seen_nonzero * 100.0)
-        kept = max(0, self.total_seen - self.total_deleted)
-        self.total_kept = kept
-        self.label.configure(text=f"Total: {self.total_images} | Left: {self.total_left} | Deleted: {self.total_deleted} | Kept: {kept} | Seen: {pct_seen:.1f}% | Deleted/Seen: {pct_deleted_of_seen:.1f}%")
+        self.label.configure(text=f"Total: {self.total_images} | Left: {self.total_left} | Deleted: {self.total_deleted} | Kept: {self.total_kept} | Seen: {pct_seen:.1f}% | Deleted/Seen: {pct_deleted_of_seen:.1f}%")
 
     def update_folder_path(self, folder_path: str):
         self.path_label_var.set(folder_path or "")
@@ -161,8 +160,9 @@ class App(tk.Tk):
         self.paths: List[str] = []
         self.queue_paths: List[str] = []
         self.total_deleted = 0
+        self.total_kept = 0
         self.total_seen = 0
-        self.undo_stack: List[List[Tuple[int, int, str, str]]] = []
+        self.undo_stack: List[List[Tuple]] = []
         self.keymap = self._read_keymap()
 
         top = ttk.Frame(self)
@@ -173,7 +173,7 @@ class App(tk.Tk):
         self.settings_button.pack(side=tk.LEFT, padx=8, pady=10)
         
         self.toggle_key_label = ttk.Label(top, text="", font=("Segoe UI", 8))
-        self.toggle_key_label.pack(side=tk.LEFT, pady=10)
+        self.toggle_key_label.pack(side=tk.LEFT, padx=0, pady=10)
         self.mode_delete = self._read_last_mode()
         self.mode_var = tk.BooleanVar(value=self.mode_delete)
         init_text = "Delete mode" if self.mode_var.get() else "Keep mode"
@@ -184,17 +184,23 @@ class App(tk.Tk):
             variable=self.mode_var,
             command=self._on_mode_changed,
             bootstyle=init_style,
-            padding=(20, 12),
-            width=24,
+            padding=(2, 12),
+            width=0,
         )
-        self.mode_button.pack(side=tk.LEFT, padx=8, pady=10)
+        self.mode_button.pack(side=tk.LEFT, padx=0, pady=10)
 
         self.open_after_keep_var = tk.BooleanVar(value=False)
         self.open_after_keep_chk = ttk.Checkbutton(top, text="open after keeping?", variable=self.open_after_keep_var)
         self.open_after_keep_chk.pack(side=tk.LEFT, padx=(0, 0), pady=10)
 
+
         self.stats = StatsBar(self)
         self.stats.pack(side=tk.TOP, fill=tk.X)
+
+        controls_row2 = ttk.Frame(self)
+        controls_row2.pack(side=tk.TOP, fill=tk.X, padx=0, pady=(0, 10))
+        self.open_kept_btn = ttk.Button(controls_row2, text="Open kept folder", command=lambda: self._open_kept_folder())
+        self.open_kept_btn.pack(side=tk.LEFT, padx=16, pady=0)
 
         center = ttk.Frame(self)
         center.pack(expand=True, fill=tk.BOTH)
@@ -309,7 +315,10 @@ class App(tk.Tk):
             self._pulse_over_widget(self.legend_L)
             return
         if key == self.keymap.get("delete_all", "m").lower():
-            self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
+            if self.mode_delete:
+                self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
+            else:
+                self._keep_slots([(0, 0), (0, 1), (1, 0), (1, 1)])
             self._pulse_over_widget(self.legend_M)
             return
         if key == self.keymap.get("undo", "z").lower():
@@ -326,7 +335,7 @@ class App(tk.Tk):
             total=len(self.paths),
             left=len(self.queue_paths),
             deleted=self.total_deleted,
-            kept=max(0, self.total_seen - self.total_deleted),
+            kept=self.total_kept,
             seen=self.total_seen,
         )
 
@@ -363,7 +372,7 @@ class App(tk.Tk):
         self._delete_slots([(r, c)])
 
     def _delete_slots(self, coords: List[Tuple[int, int]]):
-        batch: List[Tuple[int, int, str, str]] = []
+        batch: List[Tuple[int, int, str, str, str]] = []
         for r, c in coords:
             slot = self.slots[r][c]
             path = slot.path()
@@ -380,10 +389,10 @@ class App(tk.Tk):
                 self.total_deleted += 1
             except Exception:
                 pass
-            batch.append((r, c, path, backup_path))
+            batch.append((r, c, path, backup_path, "delete"))
         if batch:
             self.undo_stack.append(batch)
-        for r, c, _, _ in batch:
+        for r, c, _, _, _ in batch:
             self._fill_slot(r, c)
         self._refresh_stats()
 
@@ -393,25 +402,46 @@ class App(tk.Tk):
             return
         batch = self.undo_stack.pop()
         restored_any = False
-        for r, c, original_path, backup_path in batch:
-            if not backup_path or not Path(backup_path).exists():
-                continue
+        for item in batch:
+            if len(item) == 4:
+                r, c, original_path, backup_path = item
+                op_type = "delete"
+            else:
+                r, c, original_path, backup_path, op_type = item
             try:
-                restored_path = original_path
-                op = Path(restored_path)
-                if op.exists():
-                    stem, suffix = op.stem, op.suffix
-                    i = 1
-                    while True:
-                        candidate = op.with_name(f"{stem}_restored_{i}{suffix}")
-                        if not candidate.exists():
-                            restored_path = str(candidate)
-                            break
-                        i += 1
-                shutil.copy2(backup_path, restored_path)
-                self._insert_into_slot(r, c, restored_path)
-                restored_any = True
-                self.total_deleted = max(0, self.total_deleted - 1)
+                if op_type == "delete":
+                    if not backup_path or not Path(backup_path).exists():
+                        continue
+                    restored_path = original_path
+                    op = Path(restored_path)
+                    if op.exists():
+                        stem, suffix = op.stem, op.suffix
+                        i = 1
+                        while True:
+                            candidate = op.with_name(f"{stem}_restored_{i}{suffix}")
+                            if not candidate.exists():
+                                restored_path = str(candidate)
+                                break
+                            i += 1
+                    shutil.copy2(backup_path, restored_path)
+                    self._insert_into_slot(r, c, restored_path)
+                    restored_any = True
+                    self.total_deleted = max(0, self.total_deleted - 1)
+                elif op_type == "keep":
+                    moved_target = Path(backup_path) if backup_path else None
+                    if not moved_target or not moved_target.exists():
+                        continue
+                    original = Path(original_path)
+                    if original.exists():
+                        restored = self._unique_target(original.parent, original.name)
+                    else:
+                        restored = original
+                    shutil.move(str(moved_target), str(restored))
+                    self._insert_into_slot(r, c, str(restored))
+                    restored_any = True
+                    self.total_kept = max(0, self.total_kept - 1)
+                else:
+                    continue
             except Exception:
                 pass
         if restored_any:
@@ -484,13 +514,13 @@ class App(tk.Tk):
         self.fx_canvas.configure(bg=self.fx_key_color)
         self.mode_delete = self.mode_var.get()
         if self.mode_delete:
-            self.mode_button.configure(text="Delete mode", bootstyle="danger round-toggle", padding=(20, 12), width=24)
+            self.mode_button.configure(text="Delete mode", bootstyle="danger round-toggle", padding=(10, 12), width=0)
             self.legend_H.configure(foreground="#e6e6e6")
             self.legend_J.configure(foreground="#e6e6e6")
             self.legend_K.configure(foreground="#e6e6e6")
             self.legend_L.configure(foreground="#e6e6e6")
         else:
-            self.mode_button.configure(text="Keep mode", bootstyle="success round-toggle", padding=(20, 12), width=24)
+            self.mode_button.configure(text="Keep mode", bootstyle="success round-toggle", padding=(10, 12), width=0)
             self.legend_H.configure(foreground="#9be7a8")
             self.legend_J.configure(foreground="#9be7a8")
             self.legend_K.configure(foreground="#9be7a8")
@@ -511,6 +541,14 @@ class App(tk.Tk):
             return None
         return None
 
+    def _open_kept_folder(self):
+        try:
+            d = self._kept_dir()
+            if d is not None:
+                os.startfile(str(d))
+        except Exception:
+            pass
+
     def _unique_target(self, directory: Path, original_name: str) -> Path:
         base = Path(original_name).stem
         suffix = Path(original_name).suffix
@@ -529,6 +567,7 @@ class App(tk.Tk):
         if kept_dir is None:
             self.bell()
             return
+        batch: List[Tuple[int, int, str, str, str]] = []
         for r, c in coords:
             slot = self.slots[r][c]
             path = slot.path()
@@ -538,14 +577,18 @@ class App(tk.Tk):
             try:
                 target = self._unique_target(kept_dir, Path(path).name)
                 shutil.move(path, str(target))
+                self.total_kept += 1
                 if self.open_after_keep_var.get():
                     try:
                         os.startfile(str(target))
                     except Exception:
                         pass
+                batch.append((r, c, path, str(target), "keep"))
             except Exception:
                 pass
-        for r, c in coords:
+        if batch:
+            self.undo_stack.append(batch)
+        for r, c, _, _, _ in batch:
             self._fill_slot(r, c)
         self._refresh_stats()
 
@@ -695,7 +738,8 @@ class App(tk.Tk):
             self.legend_K.configure(text=self.keymap.get("bottom_left", "j").upper())
             self.legend_L.configure(text=self.keymap.get("bottom_right", "k").upper())
             self.legend_Z.configure(text=f"{self.keymap.get('undo', 'z').upper()}: Undo")
-            self.legend_M.configure(text=f"{self.keymap.get('delete_all', 'm').upper()}: Delete all")
+            action_all = "Delete all" if getattr(self, 'mode_delete', True) else "Keep all"
+            self.legend_M.configure(text=f"{self.keymap.get('delete_all', 'm').upper()}: {action_all}")
             
             # Update toggle key label
             toggle_key = self.keymap.get("toggle_mode", "shift_l")

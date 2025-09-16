@@ -1,7 +1,7 @@
 # GridImgViewer
 
 Simple, fast 2x2 image triage tool.
-Open a folder, view four thumbnails, delete with hotkeys, undo, calculate stats. Built with Python (Tkinter).
+Open a folder, view four thumbnails, delete/copy with hotkeys, undo, calculate stats. Built with Python (Tkinter).
 
 ![Screenshot](Screenshot.png)
 
@@ -16,7 +16,7 @@ Open a folder, view four thumbnails, delete with hotkeys, undo, calculate stats.
 
 ## Usage
 
-- Default Hotkeys: Shift (toggle delete/open mode), U (top‑left), I (top‑right), J (bottom‑left), K (bottom‑right), M (delete all four), Z (undo)
+- Default Hotkeys: Shift (toggle delete/keep mode), U (top‑left), I (top‑right), J (bottom‑left), K (bottom‑right), M (delete/keep all four), Z (undo)
 
 ## Install
 
