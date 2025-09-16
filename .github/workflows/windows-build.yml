@@ -31,6 +31,10 @@ jobs:
       - name: Build EXE with Nuitka
         shell: bash
         run: |
+          ICON_ARG=""
+          if [ -f assets/tk.ico ]; then
+            ICON_ARG="--windows-icon-from-ico=assets/tk.ico"
+          fi
           python -m nuitka \
             --onefile \
             --plugin-enable=tk-inter \
@@ -42,6 +46,7 @@ jobs:
             --assume-yes-for-downloads \
             --output-dir=dist \
             --output-filename=GridImgViewer.exe \
+            ${ICON_ARG} \
             main.py
 
       - name: Create Self-Signed Certificate
