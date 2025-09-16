@@ -70,7 +70,10 @@ class StatsBar(ttk.Frame):
         self.total_kept = 0
         self.total_seen = 0
         self.label = ttk.Label(self, text="")
-        self.label.pack(side=tk.LEFT, padx=12, pady=8)
+        self.label.pack(side=tk.TOP, padx=12, pady=(8, 0), anchor="w")
+        self.path_label_var = tk.StringVar(value="")
+        self.path_label = ttk.Label(self, textvariable=self.path_label_var, font=("Segoe UI", 8))
+        self.path_label.pack(side=tk.TOP, padx=0, pady=(2, 8), anchor="w")
         self.update_text()
 
     def update_stats(self, total=None, left=None, deleted=None, kept=None, seen=None):
@@ -93,6 +96,9 @@ class StatsBar(ttk.Frame):
         kept = max(0, self.total_seen - self.total_deleted)
         self.total_kept = kept
         self.label.configure(text=f"Total: {self.total_images} | Left: {self.total_left} | Deleted: {self.total_deleted} | Kept: {kept} | Seen: {pct_seen:.1f}% | Deleted/Seen: {pct_deleted_of_seen:.1f}%")
+
+    def update_folder_path(self, folder_path: str):
+        self.path_label_var.set(folder_path or "")
 
 
 class ImageSlot(ttk.Frame):
@@ -170,7 +176,7 @@ class App(tk.Tk):
         self.toggle_key_label.pack(side=tk.LEFT, pady=10)
         self.mode_delete = self._read_last_mode()
         self.mode_var = tk.BooleanVar(value=self.mode_delete)
-        init_text = "Delete mode" if self.mode_var.get() else "Open mode"
+        init_text = "Delete mode" if self.mode_var.get() else "Keep mode"
         init_style = "danger round-toggle" if self.mode_var.get() else "success round-toggle"
         self.mode_button = tb.Checkbutton(
             top,
@@ -182,6 +188,10 @@ class App(tk.Tk):
             width=24,
         )
         self.mode_button.pack(side=tk.LEFT, padx=8, pady=10)
+
+        self.open_after_keep_var = tk.BooleanVar(value=False)
+        self.open_after_keep_chk = ttk.Checkbutton(top, text="open after keeping?", variable=self.open_after_keep_var)
+        self.open_after_keep_chk.pack(side=tk.LEFT, padx=(0, 0), pady=10)
 
         self.stats = StatsBar(self)
         self.stats.pack(side=tk.TOP, fill=tk.X)
@@ -274,28 +284,28 @@ class App(tk.Tk):
             if self.mode_delete:
                 self._delete_at(0, 0)
             else:
-                self._open_at(0, 0)
+                self._keep_at(0, 0)
             self._pulse_over_widget(self.legend_H)
             return
         if key == self.keymap.get("top_right", "i").lower():
             if self.mode_delete:
                 self._delete_at(0, 1)
             else:
-                self._open_at(0, 1)
+                self._keep_at(0, 1)
             self._pulse_over_widget(self.legend_J)
             return
         if key == self.keymap.get("bottom_left", "j").lower():
             if self.mode_delete:
                 self._delete_at(1, 0)
             else:
-                self._open_at(1, 0)
+                self._keep_at(1, 0)
             self._pulse_over_widget(self.legend_K)
             return
         if key == self.keymap.get("bottom_right", "k").lower():
             if self.mode_delete:
                 self._delete_at(1, 1)
             else:
-                self._open_at(1, 1)
+                self._keep_at(1, 1)
             self._pulse_over_widget(self.legend_L)
             return
         if key == self.keymap.get("delete_all", "m").lower():
@@ -480,7 +490,7 @@ class App(tk.Tk):
             self.legend_K.configure(foreground="#e6e6e6")
             self.legend_L.configure(foreground="#e6e6e6")
         else:
-            self.mode_button.configure(text="Open mode", bootstyle="success round-toggle", padding=(20, 12), width=24)
+            self.mode_button.configure(text="Keep mode", bootstyle="success round-toggle", padding=(20, 12), width=24)
             self.legend_H.configure(foreground="#9be7a8")
             self.legend_J.configure(foreground="#9be7a8")
             self.legend_K.configure(foreground="#9be7a8")
@@ -488,14 +498,56 @@ class App(tk.Tk):
         self._persist_last_mode(self.mode_delete)
         self._update_legends_from_keymap()
 
-    def _open_at(self, r: int, c: int):
-        slot = self.slots[r][c]
-        path = slot.path()
-        if path:
+    def _keep_at(self, r: int, c: int):
+        self._keep_slots([(r, c)])
+
+    def _kept_dir(self) -> Optional[Path]:
+        try:
+            if hasattr(self, "current_folder") and self.current_folder:
+                d = Path(self.current_folder) / "kept"
+                d.mkdir(parents=True, exist_ok=True)
+                return d
+        except Exception:
+            return None
+        return None
+
+    def _unique_target(self, directory: Path, original_name: str) -> Path:
+        base = Path(original_name).stem
+        suffix = Path(original_name).suffix
+        candidate = directory / f"{base}{suffix}"
+        if not candidate.exists():
+            return candidate
+        i = 1
+        while True:
+            c = directory / f"{base}_{i}{suffix}"
+            if not c.exists():
+                return c
+            i += 1
+
+    def _keep_slots(self, coords: List[Tuple[int, int]]):
+        kept_dir = self._kept_dir()
+        if kept_dir is None:
+            self.bell()
+            return
+        for r, c in coords:
+            slot = self.slots[r][c]
+            path = slot.path()
+            if path is None:
+                self.bell()
+                continue
             try:
-                os.startfile(path)
+                target = self._unique_target(kept_dir, Path(path).name)
+                shutil.move(path, str(target))
+                if self.open_after_keep_var.get():
+                    try:
+                        os.startfile(str(target))
+                    except Exception:
+                        pass
             except Exception:
                 pass
+        for r, c in coords:
+            self._fill_slot(r, c)
+        self._refresh_stats()
 
     def _load_folder(self, folder: str):
         exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
@@ -509,11 +561,16 @@ class App(tk.Tk):
         self.queue_paths = list(paths)
         self.total_deleted = 0
         self.total_seen = 0
+        self.current_folder = folder
         for r in range(GRID_ROWS):
             for c in range(GRID_COLS):
                 self.slots[r][c].set_pixmap(None)
                 self.slots[r][c].set_path(None)
         self._refresh_stats()
+        try:
+            self.stats.update_folder_path(folder)
+        except Exception:
+            pass
         self._fill_all()
 
     def _backup_dir(self) -> Path:
@@ -583,14 +640,18 @@ class App(tk.Tk):
             f = self._mode_file()
             if f.exists():
                 txt = f.read_text(encoding="utf-8").strip().lower()
-                return txt == "delete"
+                if txt == "delete":
+                    return True
+                if txt in ("open", "keep"):
+                    return False
+                return True
             return True
         except Exception:
             return True
 
     def _persist_last_mode(self, delete_mode: bool):
         try:
-            self._mode_file().write_text("delete" if delete_mode else "open", encoding="utf-8")
+            self._mode_file().write_text("delete" if delete_mode else "keep", encoding="utf-8")
         except Exception:
             pass
 
