@@ -153,6 +153,9 @@ class App(tk.Tk):
         self.style.configure("TLabel", background="#0f1115", foreground="#e6e6e6")
         self.style.configure("TButton", background="#2a2f3a", foreground="#e6e6e6")
         self.bs = tb.Style(theme="darkly")
+        
+        self.style.configure("DarkRed.TCheckbutton", background="#3d1f1f", foreground="#e6e6e6", focuscolor="#3d1f1f")
+        self.style.configure("DarkNormal.TCheckbutton", background="#0f1115", foreground="#e6e6e6", focuscolor="#0f1115")
 
         self._cleanup_session_restore()
 
@@ -164,6 +167,7 @@ class App(tk.Tk):
         self.total_seen = 0
         self.undo_stack: List[List[Tuple]] = []
         self.keymap = self._read_keymap()
+        self.bg_color_setting = self._read_bg_color_setting()
 
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X)
@@ -177,15 +181,12 @@ class App(tk.Tk):
         self.mode_delete = self._read_last_mode()
         self.mode_var = tk.BooleanVar(value=self.mode_delete)
         init_text = "Delete mode" if self.mode_var.get() else "Keep mode"
-        init_style = "danger round-toggle" if self.mode_var.get() else "success round-toggle"
-        self.mode_button = tb.Checkbutton(
+        self.mode_button = ttk.Checkbutton(
             top,
             text=init_text,
             variable=self.mode_var,
             command=self._on_mode_changed,
-            bootstyle=init_style,
-            padding=(2, 12),
-            width=0,
+            style="DarkNormal.TCheckbutton",
         )
         self.mode_button.pack(side=tk.LEFT, padx=0, pady=10)
 
@@ -514,17 +515,24 @@ class App(tk.Tk):
         self.fx_canvas.configure(bg=self.fx_key_color)
         self.mode_delete = self.mode_var.get()
         if self.mode_delete:
-            self.mode_button.configure(text="Delete mode", bootstyle="danger round-toggle", padding=(10, 12), width=0)
+            self.mode_button.configure(text="Delete mode", style="DarkRed.TCheckbutton")
             self.legend_H.configure(foreground="#e6e6e6")
             self.legend_J.configure(foreground="#e6e6e6")
             self.legend_K.configure(foreground="#e6e6e6")
             self.legend_L.configure(foreground="#e6e6e6")
+            if self.bg_color_setting:
+                self.configure(bg="#3d1f1f")
+                self.style.configure("TFrame", background="#3d1f1f")
+                self.style.configure("TLabel", background="#3d1f1f", foreground="#e6e6e6")
         else:
-            self.mode_button.configure(text="Keep mode", bootstyle="success round-toggle", padding=(10, 12), width=0)
+            self.mode_button.configure(text="Keep mode", style="DarkNormal.TCheckbutton")
             self.legend_H.configure(foreground="#9be7a8")
             self.legend_J.configure(foreground="#9be7a8")
             self.legend_K.configure(foreground="#9be7a8")
             self.legend_L.configure(foreground="#9be7a8")
+            self.configure(bg="#0f1115")
+            self.style.configure("TFrame", background="#0f1115")
+            self.style.configure("TLabel", background="#0f1115", foreground="#e6e6e6")
         self._persist_last_mode(self.mode_delete)
         self._update_legends_from_keymap()
 
@@ -678,6 +686,25 @@ class App(tk.Tk):
     def _mode_file(self) -> Path:
         return self._appdata_dir() / "mode.txt"
 
+    def _bg_color_file(self) -> Path:
+        return self._appdata_dir() / "bg_color.txt"
+
+    def _read_bg_color_setting(self) -> bool:
+        try:
+            f = self._bg_color_file()
+            if f.exists():
+                content = f.read_text(encoding="utf-8").strip().lower()
+                return content == "true"
+        except Exception:
+            pass
+        return False
+
+    def _persist_bg_color_setting(self, enabled: bool):
+        try:
+            self._bg_color_file().write_text("true" if enabled else "false", encoding="utf-8")
+        except Exception:
+            pass
+
     def _read_last_mode(self) -> bool:
         try:
             f = self._mode_file()
@@ -764,6 +791,9 @@ class App(tk.Tk):
         self._key_buttons = {}
         self._key_vars = {}
         
+        bg_color_var = tk.BooleanVar(value=self.bg_color_setting)
+        ttk.Checkbutton(frm, text="Change background color in delete mode", variable=bg_color_var).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        
         fields = [
             ("top_left", "Top-Left"),
             ("top_right", "Top-Right"),
@@ -775,7 +805,7 @@ class App(tk.Tk):
         ]
         
         for idx, (key, label) in enumerate(fields):
-            ttk.Label(frm, text=label).grid(row=idx, column=0, sticky="e", padx=(0,8), pady=6)
+            ttk.Label(frm, text=label).grid(row=idx+1, column=0, sticky="e", padx=(0,8), pady=6)
             
             key_value = self.keymap.get(key, "")
             display_value = self._format_key_display(key_value)
@@ -783,14 +813,14 @@ class App(tk.Tk):
             self._key_vars[key] = var
             
             btn = ttk.Button(frm, textvariable=var, width=12, command=lambda k=key: self._start_key_recording(k))
-            btn.grid(row=idx, column=1, sticky="w", pady=6)
+            btn.grid(row=idx+1, column=1, sticky="w", pady=6)
             self._key_buttons[key] = btn
 
         btns = ttk.Frame(frm)
-        btns.grid(row=len(fields), column=0, columnspan=2, pady=(12,0))
+        btns.grid(row=len(fields)+1, column=0, columnspan=2, pady=(12,0))
         status_var = tk.StringVar(value="")
         status_lbl = ttk.Label(frm, textvariable=status_var, foreground="#ff8080")
-        status_lbl.grid(row=len(fields)+1, column=0, columnspan=2, pady=(6,0))
+        status_lbl.grid(row=len(fields)+2, column=0, columnspan=2, pady=(6,0))
 
         def on_save():
             values = {}
@@ -808,7 +838,9 @@ class App(tk.Tk):
                 return
             self.keymap = values
             self._persist_keymap()
-            self._update_legends_from_keymap()
+            self.bg_color_setting = bg_color_var.get()
+            self._persist_bg_color_setting(self.bg_color_setting)
+            self._on_mode_changed()
             status_var.set("")
             self._settings_window = None
             win.destroy()
