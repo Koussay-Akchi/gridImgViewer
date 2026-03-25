@@ -243,9 +243,14 @@ class App(tk.Tk):
         side_left.place(relx=0.0, rely=0.5, anchor="w", x=16)
         self.legend_Z = side_left
 
+        side_right_p = ttk.Label(self, text="P: Keep all")
+        side_right_p.configure(font=("Segoe UI Semibold", 20))
+        side_right_p.place(relx=1.0, rely=0.5, anchor="e", x=-16)
+        self.legend_P = side_right_p
+
         side_right = ttk.Label(self, text="M: Delete all")
         side_right.configure(font=("Segoe UI Semibold", 20))
-        side_right.place(relx=1.0, rely=0.5, anchor="e", x=-16)
+        side_right.place(relx=1.0, rely=0.57, anchor="e", x=-16)
         self.legend_M = side_right
 
         self.fx_key_color = "#010203"
@@ -316,11 +321,12 @@ class App(tk.Tk):
             self._pulse_over_widget(self.legend_L)
             return
         if key == self.keymap.get("delete_all", "m").lower():
-            if self.mode_delete:
-                self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
-            else:
-                self._keep_slots([(0, 0), (0, 1), (1, 0), (1, 1)])
+            self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
             self._pulse_over_widget(self.legend_M)
+            return
+        if key == self.keymap.get("keep_all", "p").lower():
+            self._keep_slots([(0, 0), (0, 1), (1, 0), (1, 1)])
+            self._pulse_over_widget(self.legend_P)
             return
         if key == self.keymap.get("undo", "z").lower():
             self._undo_last()
@@ -736,6 +742,7 @@ class App(tk.Tk):
             "bottom_right": "k",
             "undo": "z",
             "delete_all": "m",
+            "keep_all": "p",
             "toggle_mode": "shift_l",
         }
         try:
@@ -765,8 +772,8 @@ class App(tk.Tk):
             self.legend_K.configure(text=self.keymap.get("bottom_left", "j").upper())
             self.legend_L.configure(text=self.keymap.get("bottom_right", "k").upper())
             self.legend_Z.configure(text=f"{self.keymap.get('undo', 'z').upper()}: Undo")
-            action_all = "Delete all" if getattr(self, 'mode_delete', True) else "Keep all"
-            self.legend_M.configure(text=f"{self.keymap.get('delete_all', 'm').upper()}: {action_all}")
+            self.legend_M.configure(text=f"{self.keymap.get('delete_all', 'm').upper()}: Delete all")
+            self.legend_P.configure(text=f"{self.keymap.get('keep_all', 'p').upper()}: Keep all")
             
             # Update toggle key label
             toggle_key = self.keymap.get("toggle_mode", "shift_l")
@@ -801,6 +808,7 @@ class App(tk.Tk):
             ("bottom_right", "Bottom-Right"),
             ("undo", "Undo"),
             ("delete_all", "Delete All"),
+            ("keep_all", "Keep All"),
             ("toggle_mode", "Toggle Mode"),
         ]
         
