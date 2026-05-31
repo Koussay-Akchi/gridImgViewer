@@ -476,6 +476,10 @@ class App(tk.Tk):
 
     def _insert_into_slot(self, r: int, c: int, path: str):
         slot = self.slots[r][c]
+        existing = slot.path()
+        if existing:
+            self.queue_paths.appendleft(existing)
+            self.total_seen = max(0, self.total_seen - 1)
         slot.set_path(path)
         self.cache.get_or_submit(path, lambda p, img, _r=r, _c=c: self._on_thumb_ready(_r, _c, p, img))
 
