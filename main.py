@@ -168,6 +168,7 @@ class App(tk.Tk):
         self.undo_stack: List[List[Tuple]] = []
         self.keymap = self._read_keymap()
         self.bg_color_setting = self._read_bg_color_setting()
+        self.mode_1x2_setting = self._read_mode_1x2_setting()
 
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X)
@@ -238,6 +239,8 @@ class App(tk.Tk):
             else:
                 self.legend_L = lbl_right
 
+        self._update_grid_visibility()
+
         side_left = ttk.Label(self, text="Z: Undo")
         side_left.configure(font=("Segoe UI Semibold", 20))
         side_left.place(relx=0.0, rely=0.5, anchor="w", x=16)
@@ -307,6 +310,8 @@ class App(tk.Tk):
             self._pulse_over_widget(self.legend_J)
             return
         if key == self.keymap.get("bottom_left", "j").lower():
+            if self.mode_1x2_setting:
+                return
             if self.mode_delete:
                 self._delete_at(1, 0)
             else:
@@ -314,6 +319,8 @@ class App(tk.Tk):
             self._pulse_over_widget(self.legend_K)
             return
         if key == self.keymap.get("bottom_right", "k").lower():
+            if self.mode_1x2_setting:
+                return
             if self.mode_delete:
                 self._delete_at(1, 1)
             else:
@@ -321,11 +328,13 @@ class App(tk.Tk):
             self._pulse_over_widget(self.legend_L)
             return
         if key == self.keymap.get("delete_all", "m").lower():
-            self._delete_many([(0, 0), (0, 1), (1, 0), (1, 1)])
+            coords = [(0, 0), (0, 1)] if self.mode_1x2_setting else [(0, 0), (0, 1), (1, 0), (1, 1)]
+            self._delete_many(coords)
             self._pulse_over_widget(self.legend_M)
             return
         if key == self.keymap.get("keep_all", "p").lower():
-            self._keep_slots([(0, 0), (0, 1), (1, 0), (1, 1)])
+            coords = [(0, 0), (0, 1)] if self.mode_1x2_setting else [(0, 0), (0, 1), (1, 0), (1, 1)]
+            self._keep_slots(coords)
             self._pulse_over_widget(self.legend_P)
             return
         if key == self.keymap.get("undo", "z").lower():
@@ -349,9 +358,13 @@ class App(tk.Tk):
     def _fill_all(self):
         for r in range(GRID_ROWS):
             for c in range(GRID_COLS):
+                if self.mode_1x2_setting and r == 1:
+                    continue
                 self._fill_slot(r, c)
 
     def _fill_slot(self, r: int, c: int):
+        if self.mode_1x2_setting and r == 1:
+            return
         slot = self.slots[r][c]
         path = self._next_image()
         slot.set_path(path)
@@ -692,6 +705,37 @@ class App(tk.Tk):
     def _mode_file(self) -> Path:
         return self._appdata_dir() / "mode.txt"
 
+    def _mode_1x2_file(self) -> Path:
+        return self._appdata_dir() / "mode_1x2.txt"
+
+    def _read_mode_1x2_setting(self) -> bool:
+        try:
+            f = self._mode_1x2_file()
+            if f.exists():
+                content = f.read_text(encoding="utf-8").strip().lower()
+                return content == "true"
+        except Exception:
+            pass
+        return False
+
+    def _persist_mode_1x2_setting(self, enabled: bool):
+        try:
+            self._mode_1x2_file().write_text("true" if enabled else "false", encoding="utf-8")
+        except Exception:
+            pass
+
+    def _update_grid_visibility(self):
+        if self.mode_1x2_setting:
+            self.legend_K.grid_forget()
+            self.legend_L.grid_forget()
+            self.slots[1][0].grid_forget()
+            self.slots[1][1].grid_forget()
+        else:
+            self.legend_K.grid(row=1, column=0, padx=(16, 8), sticky="e")
+            self.slots[1][0].grid(row=1, column=1, padx=12, pady=12)
+            self.slots[1][1].grid(row=1, column=2, padx=12, pady=12)
+            self.legend_L.grid(row=1, column=3, padx=(8, 16), sticky="w")
+
     def _bg_color_file(self) -> Path:
         return self._appdata_dir() / "bg_color.txt"
 
@@ -801,6 +845,9 @@ class App(tk.Tk):
         bg_color_var = tk.BooleanVar(value=self.bg_color_setting)
         ttk.Checkbutton(frm, text="Change background color in delete mode", variable=bg_color_var).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
         
+        mode_1x2_var = tk.BooleanVar(value=self.mode_1x2_setting)
+        ttk.Checkbutton(frm, text="1x2 grid mode", variable=mode_1x2_var).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        
         fields = [
             ("top_left", "Top-Left"),
             ("top_right", "Top-Right"),
@@ -813,7 +860,7 @@ class App(tk.Tk):
         ]
         
         for idx, (key, label) in enumerate(fields):
-            ttk.Label(frm, text=label).grid(row=idx+1, column=0, sticky="e", padx=(0,8), pady=6)
+            ttk.Label(frm, text=label).grid(row=idx+2, column=0, sticky="e", padx=(0,8), pady=6)
             
             key_value = self.keymap.get(key, "")
             display_value = self._format_key_display(key_value)
@@ -821,14 +868,14 @@ class App(tk.Tk):
             self._key_vars[key] = var
             
             btn = ttk.Button(frm, textvariable=var, width=12, command=lambda k=key: self._start_key_recording(k))
-            btn.grid(row=idx+1, column=1, sticky="w", pady=6)
+            btn.grid(row=idx+2, column=1, sticky="w", pady=6)
             self._key_buttons[key] = btn
 
         btns = ttk.Frame(frm)
-        btns.grid(row=len(fields)+1, column=0, columnspan=2, pady=(12,0))
+        btns.grid(row=len(fields)+2, column=0, columnspan=2, pady=(12,0))
         status_var = tk.StringVar(value="")
         status_lbl = ttk.Label(frm, textvariable=status_var, foreground="#ff8080")
-        status_lbl.grid(row=len(fields)+2, column=0, columnspan=2, pady=(6,0))
+        status_lbl.grid(row=len(fields)+3, column=0, columnspan=2, pady=(6,0))
 
         def on_save():
             values = {}
@@ -839,7 +886,6 @@ class App(tk.Tk):
                     status_var.set("Each key must be a single alphabet letter or special key.")
                     return
                 values[k] = key_value
-            # uniqueness
             used = set(values.values())
             if len(used) != len(values):
                 status_var.set("Keys must be unique.")
@@ -848,6 +894,28 @@ class App(tk.Tk):
             self._persist_keymap()
             self.bg_color_setting = bg_color_var.get()
             self._persist_bg_color_setting(self.bg_color_setting)
+            
+            old_mode_1x2 = self.mode_1x2_setting
+            self.mode_1x2_setting = mode_1x2_var.get()
+            self._persist_mode_1x2_setting(self.mode_1x2_setting)
+            if old_mode_1x2 != self.mode_1x2_setting:
+                if self.mode_1x2_setting:
+                    restored_paths = []
+                    for c in range(GRID_COLS):
+                        p = self.slots[1][c].path()
+                        if p:
+                            restored_paths.append(p)
+                            self.slots[1][c].set_path(None)
+                            self.slots[1][c].set_pixmap(None)
+                            self.total_seen -= 1
+                    if restored_paths:
+                        self.queue_paths = restored_paths + self.queue_paths
+                self._update_grid_visibility()
+                if not self.mode_1x2_setting:
+                    for c in range(GRID_COLS):
+                        self._fill_slot(1, c)
+                self._refresh_stats()
+
             self._on_mode_changed()
             status_var.set("")
             self._settings_window = None
