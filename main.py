@@ -1,7 +1,9 @@
 import os
 import sys
+import time
 import threading
 import queue
+from collections import deque
 import hashlib
 import shutil
 from pathlib import Path
@@ -24,10 +26,11 @@ MAX_WORKERS = max(4, (os.cpu_count() or 4))
 
 
 class ThumbnailCache:
-    def __init__(self):
+    def __init__(self, tk_root: tk.Tk):
         self._cache: Dict[str, ImageTk.PhotoImage] = {}
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+        self._root = tk_root
 
     def get_or_submit(self, path: str, callback):
         with self._lock:
@@ -36,7 +39,7 @@ class ThumbnailCache:
             callback(path, pix)
             return
 
-        def load_thumb(p: str) -> Optional[ImageTk.PhotoImage]:
+        def load_raw(p: str) -> Optional[Image.Image]:
             try:
                 im = Image.open(p)
                 im = ImageOps.exif_transpose(im)
@@ -45,20 +48,23 @@ class ThumbnailCache:
                 x = (THUMBNAIL_SIZE[0] - im.width) // 2
                 y = (THUMBNAIL_SIZE[1] - im.height) // 2
                 canvas.paste(im, (x, y))
-                return ImageTk.PhotoImage(canvas)
+                return canvas
             except Exception:
                 return None
 
         def done(fut):
-            img = fut.result()
-            if img is None:
+            raw = fut.result()
+            if raw is None:
                 return
-            with self._lock:
-                self._cache[path] = img
-            callback(path, img)
+            def finish_on_main():
+                photo = ImageTk.PhotoImage(raw)
+                with self._lock:
+                    self._cache[path] = photo
+                callback(path, photo)
+            self._root.after(0, finish_on_main)
 
-        fut = self._executor.submit(load_thumb, path)
-        fut.add_done_callback(lambda f: done(f))
+        fut = self._executor.submit(load_raw, path)
+        fut.add_done_callback(done)
 
 
 class StatsBar(ttk.Frame):
@@ -120,11 +126,9 @@ class ImageSlot(ttk.Frame):
     def set_pixmap(self, photo: Optional[ImageTk.PhotoImage]):
         self._photo = photo
         if photo is None:
-            self.label.configure(text=":-)")
-            self.label.configure(image="")
+            self.label.configure(text=":-)", image="")
         else:
-            self.label.configure(text="")
-            self.label.configure(image=photo)
+            self.label.configure(text="", image=photo)
 
     def _handle_click(self, _):
         if self._path:
@@ -159,9 +163,9 @@ class App(tk.Tk):
 
         self._cleanup_session_restore()
 
-        self.cache = ThumbnailCache()
+        self.cache = ThumbnailCache(self)
         self.paths: List[str] = []
-        self.queue_paths: List[str] = []
+        self.queue_paths: deque = deque()
         self.total_deleted = 0
         self.total_kept = 0
         self.total_seen = 0
@@ -169,6 +173,7 @@ class App(tk.Tk):
         self.keymap = self._read_keymap()
         self.bg_color_setting = self._read_bg_color_setting()
         self.mode_1x2_setting = self._read_mode_1x2_setting()
+        self._cached_backup_dir: Optional[Path] = None
 
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X)
@@ -360,9 +365,10 @@ class App(tk.Tk):
             for c in range(GRID_COLS):
                 if self.mode_1x2_setting and r == 1:
                     continue
-                self._fill_slot(r, c)
+                self._fill_slot(r, c, _defer_stats=True)
+        self._refresh_stats()
 
-    def _fill_slot(self, r: int, c: int):
+    def _fill_slot(self, r: int, c: int, _defer_stats: bool = False):
         if self.mode_1x2_setting and r == 1:
             return
         slot = self.slots[r][c]
@@ -372,8 +378,9 @@ class App(tk.Tk):
             slot.set_pixmap(None)
         else:
             self.total_seen += 1
-            self.cache.get_or_submit(path, lambda p, img: self._on_thumb_ready(r, c, p, img))
-        self._refresh_stats()
+            self.cache.get_or_submit(path, lambda p, img, _r=r, _c=c: self._on_thumb_ready(_r, _c, p, img))
+        if not _defer_stats:
+            self._refresh_stats()
 
     def _on_thumb_ready(self, r: int, c: int, path: str, photo: ImageTk.PhotoImage):
         slot = self.slots[r][c]
@@ -383,7 +390,7 @@ class App(tk.Tk):
     def _next_image(self) -> Optional[str]:
         if not self.queue_paths:
             return None
-        return self.queue_paths.pop(0)
+        return self.queue_paths.popleft()
 
     def _delete_many(self, coords: List[Tuple[int, int]]):
         self._delete_slots(coords)
@@ -413,7 +420,7 @@ class App(tk.Tk):
         if batch:
             self.undo_stack.append(batch)
         for r, c, _, _, _ in batch:
-            self._fill_slot(r, c)
+            self._fill_slot(r, c, _defer_stats=True)
         self._refresh_stats()
 
     def _undo_last(self):
@@ -470,10 +477,9 @@ class App(tk.Tk):
     def _insert_into_slot(self, r: int, c: int, path: str):
         slot = self.slots[r][c]
         slot.set_path(path)
-        self.cache.get_or_submit(path, lambda p, img: self._on_thumb_ready(r, c, p, img))
+        self.cache.get_or_submit(path, lambda p, img, _r=r, _c=c: self._on_thumb_ready(_r, _c, p, img))
 
     def _widget_center(self, w: tk.Widget) -> Tuple[int, int, int]:
-        self.update_idletasks()
         x = w.winfo_rootx() - self.fx_canvas.winfo_rootx()
         y = w.winfo_rooty() - self.fx_canvas.winfo_rooty()
         wdt = w.winfo_width()
@@ -484,9 +490,8 @@ class App(tk.Tk):
         cx, cy, _ = self._widget_center(w)
         self._pulse_at(cx, cy, max_radius=50, duration_ms=180)
 
-    def _pulse_at(self, x: int, y: int, steps: Optional[List[int]] = None, *, max_radius: int = 50, duration_ms: int = 180):
+    def _pulse_at(self, x: int, y: int, steps=None, *, max_radius: int = 50, duration_ms: int = 180):
         color = "white"
-        self.update_idletasks()
         gx = self.winfo_rootx()
         gy = self.winfo_rooty()
         gw = self.winfo_width()
@@ -496,28 +501,22 @@ class App(tk.Tk):
         self.fx_canvas.delete("all")
         oid = self.fx_canvas.create_oval(x-1, y-1, x+1, y+1, fill="", outline=color, width=3)
 
-        start_time = None
+        start_time = time.perf_counter()
+        duration_s = duration_ms / 1000.0
 
         def ease_out_cubic(t: float) -> float:
             u = 1.0 - t
             return 1.0 - u * u * u
 
         def animate():
-            nonlocal start_time
-            now = self.tk.call('after', 'info')
-            import time
-            if start_time is None:
-                start_time = time.perf_counter()
-            elapsed = (time.perf_counter() - start_time) * 1000.0
-            t = max(0.0, min(1.0, elapsed / float(duration_ms)))
-            r = int(ease_out_cubic(t) * max_radius)
-            if r < 1:
-                r = 1
-            self.fx_canvas.coords(oid, x - r, y - r, x + r, y + r)
+            elapsed = time.perf_counter() - start_time
+            t = elapsed / duration_s
             if t >= 1.0:
                 self.fx_canvas.delete(oid)
                 self.fx_win.withdraw()
                 return
+            r = max(1, int(ease_out_cubic(t) * max_radius))
+            self.fx_canvas.coords(oid, x - r, y - r, x + r, y + r)
             self.after(15, animate)
 
         animate()
@@ -616,7 +615,7 @@ class App(tk.Tk):
         if batch:
             self.undo_stack.append(batch)
         for r, c, _, _, _ in batch:
-            self._fill_slot(r, c)
+            self._fill_slot(r, c, _defer_stats=True)
         self._refresh_stats()
 
     def _load_folder(self, folder: str):
@@ -628,9 +627,10 @@ class App(tk.Tk):
                 if entry.is_file() and entry.suffix.lower() in exts:
                     paths.append(str(entry))
         self.paths = paths
-        self.queue_paths = list(paths)
+        self.queue_paths = deque(paths)
         self.total_deleted = 0
         self.total_seen = 0
+        self._cached_backup_dir = None
         self.current_folder = folder
         for r in range(GRID_ROWS):
             for c in range(GRID_COLS):
@@ -644,11 +644,14 @@ class App(tk.Tk):
         self._fill_all()
 
     def _backup_dir(self) -> Path:
+        if self._cached_backup_dir is not None:
+            return self._cached_backup_dir
         base = os.getenv("APPDATA")
         if not base:
             base = str(Path.home())
         d = Path(base) / "gridImgViewer" / "session_restore"
         d.mkdir(parents=True, exist_ok=True)
+        self._cached_backup_dir = d
         return d
 
     def _backup_for_path(self, original_path: str) -> str:
@@ -819,7 +822,6 @@ class App(tk.Tk):
             self.legend_M.configure(text=f"{self.keymap.get('delete_all', 'm').upper()}: Delete all")
             self.legend_P.configure(text=f"{self.keymap.get('keep_all', 'p').upper()}: Keep all")
             
-            # Update toggle key label
             toggle_key = self.keymap.get("toggle_mode", "shift_l")
             toggle_display = self._format_key_display(toggle_key)
             self.toggle_key_label.configure(text=f"Toggle: {toggle_display}")
@@ -909,11 +911,11 @@ class App(tk.Tk):
                             self.slots[1][c].set_pixmap(None)
                             self.total_seen -= 1
                     if restored_paths:
-                        self.queue_paths = restored_paths + self.queue_paths
+                        self.queue_paths.extendleft(reversed(restored_paths))
                 self._update_grid_visibility()
                 if not self.mode_1x2_setting:
                     for c in range(GRID_COLS):
-                        self._fill_slot(1, c)
+                        self._fill_slot(1, c, _defer_stats=True)
                 self._refresh_stats()
 
             self._on_mode_changed()
